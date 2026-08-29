@@ -3,6 +3,7 @@ package fortinet
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -101,6 +102,40 @@ func TestPasswordLoginSendsFormAndRetainsCookie(t *testing.T) {
 	want := url.Values{"username": {"alice"}, "credential": {"not-logged"}, "realm": {"employees"}, "ajax": {"1"}}
 	if !reflect.DeepEqual(gotForm, want) {
 		t.Fatalf("form = %#v, want %#v", gotForm, want)
+	}
+}
+
+func TestPasswordLoginReportsInvalidPasswordAndTracesCookieDiagnostic(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header), Body: io.NopCloser(strings.NewReader("ret=0")), Request: r}, nil
+	})
+	client, err := NewClient(ClientOptions{Gateway: "example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.http.Transport = transport
+	var trace bytes.Buffer
+	client.SetDebugWriter(&trace)
+	err = client.AuthenticatePassword(context.Background(), "alice", "wrong", "")
+	if !errors.Is(err, ErrInvalidPassword) || err.Error() != "Password errata" {
+		t.Fatalf("AuthenticatePassword() error = %v", err)
+	}
+	if !strings.Contains(trace.String(), "gateway did not issue an SVPNCOOKIE") {
+		t.Fatalf("debug trace = %q, missing cookie diagnostic", trace.String())
+	}
+}
+
+func TestPasswordLoginMapsUnauthorizedToInvalidPassword(t *testing.T) {
+	transport := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized", Header: make(http.Header), Body: io.NopCloser(strings.NewReader("denied")), Request: r}, nil
+	})
+	client, err := NewClient(ClientOptions{Gateway: "example.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.http.Transport = transport
+	if err := client.AuthenticatePassword(context.Background(), "alice", "wrong", ""); !errors.Is(err, ErrInvalidPassword) {
+		t.Fatalf("AuthenticatePassword() error = %v, want ErrInvalidPassword", err)
 	}
 }
 

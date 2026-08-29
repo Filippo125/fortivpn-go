@@ -23,6 +23,12 @@ import (
 
 const userAgent = "fortivpn-go/0.1"
 
+// ErrInvalidPassword is returned only by the traditional username/password
+// authentication flow when FortiGate rejects the supplied credentials.
+var ErrInvalidPassword = errors.New("Password errata")
+
+var errSessionCookieMissing = errors.New("gateway did not issue an SVPNCOOKIE; authentication was rejected or requires an unsupported challenge")
+
 type ClientOptions struct {
 	Gateway  string
 	Port     int
@@ -32,6 +38,7 @@ type ClientOptions struct {
 type Client struct {
 	baseURL *url.URL
 	http    *http.Client
+	tls     *tls.Config
 	debug   io.Writer
 }
 
@@ -76,12 +83,14 @@ func NewClient(options ClientOptions) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create cookie jar: %w", err)
 	}
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: options.Insecure} // #nosec G402 -- enabled only by explicit CLI option
 	return &Client{
 		baseURL: endpoint,
+		tls:     tlsConfig,
 		http: &http.Client{
 			Jar: jar,
 			Transport: &http.Transport{
-				TLSClientConfig:    &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: options.Insecure}, // #nosec G402 -- enabled only by explicit CLI option
+				TLSClientConfig:    tlsConfig,
 				DisableCompression: true,
 				ForceAttemptHTTP2:  false,
 				TLSNextProto:       make(map[string]func(string, *tls.Conn) http.RoundTripper),
@@ -289,9 +298,20 @@ func (c *Client) AuthenticatePassword(ctx context.Context, username, password, r
 	}
 	response, err := c.postForm(ctx, "/remote/logincheck", form)
 	if err != nil {
+		var statusErr *HTTPStatusError
+		if errors.As(err, &statusErr) && (statusErr.StatusCode == http.StatusUnauthorized || statusErr.StatusCode == http.StatusForbidden) {
+			c.tracef("password authentication failed: %v", err)
+			return ErrInvalidPassword
+		}
 		return err
 	}
-	return c.completeAuthentication(ctx, response)
+	if err := c.completeAuthentication(ctx, response); err != nil {
+		if errors.Is(err, errSessionCookieMissing) {
+			return ErrInvalidPassword
+		}
+		return err
+	}
+	return nil
 }
 
 // completeAuthentication follows the application-level host-check redirect
@@ -315,7 +335,8 @@ func (c *Client) completeAuthentication(ctx context.Context, response []byte) er
 	if c.hasSessionCookie() {
 		return nil
 	}
-	return errors.New("gateway did not issue an SVPNCOOKIE; authentication was rejected or requires an unsupported challenge")
+	c.tracef("%v", errSessionCookieMissing)
+	return errSessionCookieMissing
 }
 
 func authRedirectPath(response []byte) (string, bool) {
@@ -341,9 +362,16 @@ func authRedirectPath(response []byte) (string, bool) {
 	return endpoint.RequestURI(), true
 }
 
-// NetworkConfig requests a VPN allocation then obtains the dual-stack XML
+// NetworkConfig requests a VPN allocation then obtains the best available XML
 // configuration. No TUN interface, routes, or DNS are changed by this method.
 func (c *Client) NetworkConfig(ctx context.Context) (*network.Config, error) {
+	return c.NetworkConfigForIPMode(ctx, network.IPModeAuto)
+}
+
+// NetworkConfigForIPMode requests a VPN allocation and restricts the result to
+// one IP family when requested. Auto tries the dual-stack endpoint first and
+// falls back to the legacy single-stack endpoint for older FortiGates.
+func (c *Client) NetworkConfigForIPMode(ctx context.Context, mode network.IPMode) (*network.Config, error) {
 	if _, err := c.get(ctx, "/remote/index"); err != nil {
 		var statusErr *HTTPStatusError
 		if !errors.As(err, &statusErr) || statusErr.StatusCode != http.StatusForbidden {
@@ -356,7 +384,15 @@ func (c *Client) NetworkConfig(ctx context.Context) (*network.Config, error) {
 	if _, err := c.get(ctx, "/remote/fortisslvpn"); err != nil {
 		return nil, err
 	}
-	xmlConfig, err := c.get(ctx, "/remote/fortisslvpn_xml?dual_stack=1")
+	path := "/remote/fortisslvpn_xml?dual_stack=1"
+	if mode == network.IPModeIPv4 {
+		path = "/remote/fortisslvpn_xml"
+	}
+	xmlConfig, err := c.get(ctx, path)
+	if err != nil && mode != network.IPModeDualStack && path != "/remote/fortisslvpn_xml" {
+		c.tracef("GET /remote/fortisslvpn_xml?dual_stack=1 failed; trying legacy allocation")
+		xmlConfig, err = c.get(ctx, "/remote/fortisslvpn_xml")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -365,5 +401,9 @@ func (c *Client) NetworkConfig(ctx context.Context) (*network.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse FortiGate network configuration: %w", err)
 	}
-	return config, nil
+	selected, err := config.ForIPMode(mode)
+	if err != nil {
+		return nil, fmt.Errorf("select FortiGate IP mode: %w", err)
+	}
+	return selected, nil
 }

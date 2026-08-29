@@ -27,7 +27,7 @@ func TestParseNetworkConfigIPv6Only(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if config.IPv4 != nil || config.IPv6 == nil || config.IPv6.Address.String() != "2001:db8:3::/120" {
+	if config.IPv4 != nil || config.IPv6 == nil || config.IPv6.Address.String() != "2001:db8:3::8/120" {
 		t.Fatalf("config = %#v", config)
 	}
 }

@@ -201,7 +201,7 @@ func parseRoute(config *network.Config, attrs map[string]string) bool {
 	if err != nil {
 		return false
 	}
-	route := network.Route{Destination: prefix, Gateway: parseGateway(attrs, prefix.Addr().Is6())}
+	route := network.Route{Destination: prefix.Masked(), Gateway: parseGateway(attrs, prefix.Addr().Is6())}
 	if prefix.Addr().Is6() {
 		config.Routes6 = appendUniqueRoute(config.Routes6, route)
 	} else {
@@ -212,7 +212,7 @@ func parseRoute(config *network.Config, attrs map[string]string) bool {
 
 func parsePrefix(raw, mask, prefixLength string) (netip.Prefix, error) {
 	if prefix, err := netip.ParsePrefix(raw); err == nil {
-		return prefix.Masked(), nil
+		return prefix, nil
 	}
 	addr, err := netip.ParseAddr(raw)
 	if err != nil {
@@ -234,7 +234,7 @@ func parsePrefix(raw, mask, prefixLength string) (netip.Prefix, error) {
 			bits = value
 		}
 	}
-	return netip.PrefixFrom(addr, bits).Masked(), nil
+	return netip.PrefixFrom(addr, bits), nil
 }
 
 func maskBits(mask netip.Addr) int {

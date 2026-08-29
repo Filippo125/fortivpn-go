@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -21,6 +22,9 @@ func (a *PasswordAuthenticator) Authenticate(ctx context.Context, client *fortin
 		return nil, fmt.Errorf("username and password are required")
 	}
 	if err := client.AuthenticatePassword(ctx, a.Username, string(a.Password), a.Realm); err != nil {
+		if errors.Is(err, fortinet.ErrInvalidPassword) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("authenticate with username and password: %w", err)
 	}
 	return &AuthResult{}, nil
