@@ -141,3 +141,8 @@ tokens, or query-string values.
 
 TLS certificate validation is enabled by default. `--insecure` disables it and
 is intended only for controlled diagnostics.
+
+## License
+
+Copyright © 2026 Filippo Ferrazini. This project is licensed under the GNU
+General Public License v3.0. See [LICENSE](LICENSE).

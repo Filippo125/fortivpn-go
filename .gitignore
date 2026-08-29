@@ -1,0 +1,8 @@
+# Local IDE settings may contain run configurations and credentials.
+.idea/
+
+# Local Go build output.
+/fortivpn
+
+# macOS metadata.
+.DS_Store
