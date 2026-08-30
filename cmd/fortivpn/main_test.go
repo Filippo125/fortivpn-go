@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/filippoferrazini/fortivpn-go/internal/network"
+	"github.com/Filippo125/fortivpn-go/internal/network"
 )
 
 func TestInspectAcceptsGatewayBeforeOptions(t *testing.T) {

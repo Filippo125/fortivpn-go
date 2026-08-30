@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/filippoferrazini/fortivpn-go/internal/network"
+	"github.com/Filippo125/fortivpn-go/internal/network"
 )
 
 // Device is a session-owned packet device. Read and Write use bare IP packets;

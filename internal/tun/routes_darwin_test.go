@@ -6,7 +6,7 @@ import (
 	"net/netip"
 	"testing"
 
-	"github.com/filippoferrazini/fortivpn-go/internal/network"
+	"github.com/Filippo125/fortivpn-go/internal/network"
 )
 
 func TestNewRouteSpecPreservesFamilyAndPrefix(t *testing.T) {

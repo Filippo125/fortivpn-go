@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/filippoferrazini/fortivpn-go/internal/fortinet"
+	"github.com/Filippo125/fortivpn-go/internal/fortinet"
 )
 
 type SAMLAuthenticator struct {

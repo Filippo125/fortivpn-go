@@ -14,11 +14,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/filippoferrazini/fortivpn-go/internal/auth"
-	"github.com/filippoferrazini/fortivpn-go/internal/fortinet"
-	"github.com/filippoferrazini/fortivpn-go/internal/network"
-	"github.com/filippoferrazini/fortivpn-go/internal/tun"
-	"github.com/filippoferrazini/fortivpn-go/internal/tunnel"
+	"github.com/Filippo125/fortivpn-go/internal/auth"
+	"github.com/Filippo125/fortivpn-go/internal/fortinet"
+	"github.com/Filippo125/fortivpn-go/internal/network"
+	"github.com/Filippo125/fortivpn-go/internal/tun"
+	"github.com/Filippo125/fortivpn-go/internal/tunnel"
 	"golang.org/x/term"
 )
 

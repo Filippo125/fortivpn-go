@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/filippoferrazini/fortivpn-go/internal/network"
+	"github.com/Filippo125/fortivpn-go/internal/network"
 )
 
 const userAgent = "fortivpn-go/0.1"

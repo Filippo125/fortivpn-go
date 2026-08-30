@@ -8,7 +8,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/filippoferrazini/fortivpn-go/internal/tun"
+	"github.com/Filippo125/fortivpn-go/internal/tun"
 )
 
 const defaultPacketBufferSize = 65535

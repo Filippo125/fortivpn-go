@@ -1,4 +1,4 @@
-module github.com/filippoferrazini/fortivpn-go
+module github.com/Filippo125/fortivpn-go
 
 go 1.25.0
 

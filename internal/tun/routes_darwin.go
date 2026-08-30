@@ -8,7 +8,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/filippoferrazini/fortivpn-go/internal/network"
+	"github.com/Filippo125/fortivpn-go/internal/network"
 )
 
 // ConfigureRoutes installs the supplied split-tunnel routes through device.

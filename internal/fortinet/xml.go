@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/filippoferrazini/fortivpn-go/internal/network"
+	"github.com/Filippo125/fortivpn-go/internal/network"
 )
 
 // ParseNetworkConfig accepts the XML variants emitted by FortiGate releases.

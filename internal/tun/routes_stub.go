@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/filippoferrazini/fortivpn-go/internal/network"
+	"github.com/Filippo125/fortivpn-go/internal/network"
 )
 
 // ConfigureRoutes is unavailable where the native macOS utun implementation

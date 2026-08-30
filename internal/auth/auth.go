@@ -5,7 +5,7 @@ package auth
 import (
 	"context"
 
-	"github.com/filippoferrazini/fortivpn-go/internal/fortinet"
+	"github.com/Filippo125/fortivpn-go/internal/fortinet"
 )
 
 type Secret string
