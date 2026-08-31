@@ -59,7 +59,7 @@ Tunnel probe:
   transport handshake; it does not create an interface or alter system routes.
 
 Tunnel connect:
-  Creates a native macOS utun interface, applies the addresses and split-tunnel
+  Creates a native TUN interface, applies the addresses and split-tunnel
   routes supplied by the gateway, and forwards IPv4/IPv6 packets until Ctrl-C.
   DNS server settings are reported but left unchanged.
 `
@@ -208,7 +208,7 @@ func runTun(args []string, out io.Writer) error {
 	defer device.Close()
 	configurer, ok := device.(tun.Configurer)
 	if !ok {
-		return errors.New("utun implementation cannot configure the interface")
+		return errors.New("native TUN implementation cannot configure the interface")
 	}
 	if err := configurer.Configure(context.Background(), config); err != nil {
 		return err
@@ -318,7 +318,7 @@ func runTunnelProbe(args []string, out io.Writer) error {
 	defer tunnel.Close()
 	fmt.Fprintf(out, "Gateway: %s\n", client.Gateway())
 	fmt.Fprintln(out, "FortiGate TUN endpoint: accepted")
-	fmt.Fprintln(out, "No utun interface, routes, DNS, or packets were changed.")
+	fmt.Fprintln(out, "No TUN interface, routes, DNS, or packets were changed.")
 	return nil
 }
 
@@ -409,7 +409,7 @@ func runTunnelConnect(args []string, out io.Writer) error {
 	defer device.Close()
 	configurer, ok := device.(tun.Configurer)
 	if !ok {
-		return errors.New("utun implementation cannot configure the interface")
+		return errors.New("native TUN implementation cannot configure the interface")
 	}
 	if err := configurer.Configure(authCtx, tun.Config{IPv4: config.IPv4, IPv6: config.IPv6, MTU: config.MTU}); err != nil {
 		return err

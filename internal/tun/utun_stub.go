@@ -1,10 +1,10 @@
-//go:build !darwin
+//go:build !darwin && !linux
 
 package tun
 
 import "errors"
 
-// Create is intentionally unavailable outside macOS in this milestone.
+// Create is unavailable on platforms without a native TUN implementation.
 func Create() (Device, error) {
-	return nil, errors.New("native utun is supported only on macOS")
+	return nil, errors.New("native TUN is supported only on macOS and Linux")
 }

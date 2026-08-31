@@ -1,14 +1,16 @@
 # fortivpn-go
 
 Native Go client for FortiGate SSL-VPN. It authenticates with SAML or with a
-username and password, reads the FortiGate allocation, and on macOS can create
-a native `utun` interface to forward the allocated IPv4 and/or IPv6 traffic.
+username and password, reads the FortiGate allocation, and on macOS or Linux
+can create a native TUN interface to forward the allocated IPv4 and/or IPv6 traffic.
 
 ## Requirements
 
 - Go 1.25 or later to build from source.
-- macOS for `tunnel connect` and `tun create`.
-- Administrator privileges for commands that create `utun` or install routes.
+- macOS or Linux (Ubuntu 22.04+) for `tunnel connect` and `tun create`.
+- On Ubuntu, the `iproute2` package and the `/dev/net/tun` device must be
+  available (both are normally present on a standard installation).
+- Administrator privileges for commands that create a TUN interface or install routes.
 
 ## Authentication
 
@@ -89,8 +91,9 @@ go run ./cmd/fortivpn inspect vpn.example.com --username alice
 go run ./cmd/fortivpn tunnel probe vpn.example.com --username alice
 ```
 
-`tunnel connect` creates a temporary native `utunN`, configures the allocated
-addresses and MTU, installs the allocated split-tunnel routes, and forwards
+`tunnel connect` creates a temporary native TUN interface (`utunN` on macOS,
+`tunN` on Linux), configures the allocated addresses and MTU, installs the
+allocated split-tunnel routes, and forwards
 packets until `Ctrl-C`:
 
 ```sh
@@ -98,7 +101,7 @@ sudo go run ./cmd/fortivpn tunnel connect vpn.example.com \
   --username alice --ip-mode auto
 ```
 
-On shutdown, the client removes the routes it installed and closes the `utun`
+On shutdown, the client removes the routes it installed and closes the TUN
 interface. DNS servers and search domains returned by FortiGate are displayed
 but deliberately not applied globally.
 
@@ -120,7 +123,7 @@ sudo go run ./cmd/fortivpn tunnel connect vpn.example.com --username alice --ip-
 sudo go run ./cmd/fortivpn tunnel connect vpn.example.com --username alice --ip-mode ipv6
 ```
 
-## Native `utun` smoke test
+## Native TUN smoke test
 
 Create an independent interface without contacting a gateway or installing
 routes/DNS:
