@@ -25,25 +25,33 @@ type linuxTun struct {
 // Create opens an automatically named Linux TUN device. It requires access to
 // /dev/net/tun and CAP_NET_ADMIN (normally provided by running as root).
 func Create() (Device, error) {
-	file, err := os.OpenFile(linuxTunDevice, os.O_RDWR, 0)
+	// os.OpenFile may leave /dev/net/tun in a non-pollable state (see the
+	// Go runtime's internal/poll Linux regression test). Open it non-blocking
+	// before wrapping the descriptor so os.NewFile registers it with netpoll.
+	fd, err := unix.Open(linuxTunDevice, unix.O_RDWR|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", linuxTunDevice, err)
 	}
 
 	request, err := unix.NewIfreq("tun%d")
 	if err != nil {
-		_ = file.Close()
+		_ = unix.Close(fd)
 		return nil, fmt.Errorf("prepare TUN interface request: %w", err)
 	}
 	request.SetUint16(unix.IFF_TUN | unix.IFF_NO_PI)
-	if err := unix.IoctlIfreq(int(file.Fd()), unix.TUNSETIFF, request); err != nil {
-		_ = file.Close()
+	if err := unix.IoctlIfreq(fd, unix.TUNSETIFF, request); err != nil {
+		_ = unix.Close(fd)
 		return nil, fmt.Errorf("create Linux TUN interface: %w", err)
 	}
 	name := request.Name()
 	if name == "" {
-		_ = file.Close()
+		_ = unix.Close(fd)
 		return nil, fmt.Errorf("create Linux TUN interface: kernel returned an empty interface name")
+	}
+	file := os.NewFile(uintptr(fd), linuxTunDevice)
+	if file == nil {
+		_ = unix.Close(fd)
+		return nil, fmt.Errorf("create Linux TUN interface: wrap file descriptor")
 	}
 	return &linuxTun{file: file, name: name}, nil
 }

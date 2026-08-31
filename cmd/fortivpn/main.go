@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -418,11 +419,14 @@ func runTunnelConnect(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err := cleanupRoutes(); err != nil {
+	managedDevice := &routeCleanupDevice{
+		Device:  device,
+		cleanup: cleanupRoutes,
+		onCleanupError: func(err error) {
 			fmt.Fprintf(out, "Warning: %v\n", err)
-		}
-	}()
+		},
+	}
+	defer managedDevice.Close()
 
 	fmt.Fprintf(out, "Gateway: %s\n", client.Gateway())
 	fmt.Fprintf(out, "Interface: %s\n", device.Name())
@@ -433,7 +437,30 @@ func runTunnelConnect(args []string, out io.Writer) error {
 	fmt.Fprintln(out, "VPN tunnel is active. Press Ctrl-C to disconnect.")
 	sessionCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return (tunnel.PacketEngine{Device: device, Tunnel: transport}).Run(sessionCtx)
+	return (tunnel.PacketEngine{Device: managedDevice, Tunnel: transport}).Run(sessionCtx)
+}
+
+// routeCleanupDevice removes session routes while the TUN interface still
+// exists. PacketEngine closes its Device to release blocked reads, so a normal
+// defer in runTunnelConnect would otherwise run too late on Linux.
+type routeCleanupDevice struct {
+	tun.Device
+	cleanup        func() error
+	onCleanupError func(error)
+	once           sync.Once
+	closeErr       error
+}
+
+func (d *routeCleanupDevice) Close() error {
+	d.once.Do(func() {
+		if d.cleanup != nil {
+			if err := d.cleanup(); err != nil && d.onCleanupError != nil {
+				d.onCleanupError(err)
+			}
+		}
+		d.closeErr = d.Device.Close()
+	})
+	return d.closeErr
 }
 
 func hasTunnelMethod(config *network.Config, method network.TunnelMethod) bool {
