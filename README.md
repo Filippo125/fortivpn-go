@@ -12,6 +12,104 @@ can create a native TUN interface to forward the allocated IPv4 and/or IPv6 traf
   available (both are normally present on a standard installation).
 - Administrator privileges for commands that create a TUN interface or install routes.
 
+## Configuration file
+
+Use a YAML or JSON file with `--config`. Settings are resolved in this order:
+global values, group values, instance values, and finally command-line options.
+Select an instance with `--instance gruppo\istanza`. If the file contains
+exactly one instance, it is selected automatically; an instance without a
+group uses its name alone.
+
+```yaml
+# ~/.config/fortivpn/config.yaml
+globals:
+  insecure: false
+  ip_mode: auto
+  timeout: 5m
+  browser: default
+  username: alice
+  # password: your-password
+
+groups:
+  company:
+    username: alice@company.example
+    saml: true
+
+instances:
+  - name: production
+    group: company
+    gateway: vpn.example.com
+    port: 443
+    realm: employees
+
+  - name: lab
+    group: company
+    gateway: vpn-lab.example.com
+    insecure: true
+    saml: false
+    username: lab-user
+```
+
+For example:
+
+```sh
+go run ./cmd/fortivpn tunnel connect \
+  --config ~/.config/fortivpn/config.yaml --instance 'company\production'
+```
+
+`globals` supports `insecure`, `ip_mode`, `timeout`, `browser`, `username`, and
+`password`. Each entry in the `groups` dictionary supports the same values plus
+`saml`. An instance supports all of those values plus `name`, `group`, `gateway`,
+`port`, and `realm`. Field names and unknown values are checked strictly.
+
+JSON uses the same structure and field names. Other formats, including INI,
+are rejected.
+
+A file containing a password at any level must be `0600` (for example,
+`chmod 600 config.yaml`), or the program refuses to use it. An instance can
+clear an inherited password with `password: ""`. `--password-stdin` overrides a
+configured password; use `--saml=false` to override inherited SAML authentication.
+
+### Adding an instance
+
+Add an instance without editing the file manually:
+
+```sh
+fortivpn config add-instance \
+  --config ~/.config/fortivpn/config.yaml \
+  --instance 'company\disaster-recovery' \
+  --gateway vpn-dr.example.com \
+  --realm employees \
+  --saml \
+  --ip-mode dual
+```
+
+The group must already exist. The command rejects duplicate selectors and
+invalid values, then replaces the JSON or YAML file atomically. It preserves
+the file permissions; when `--password` is used it restricts them to `0600`.
+All instance fields shown in the configuration example have corresponding
+flags; boolean overrides also accept forms such as `--saml=false`.
+
+### Shell completion
+
+The generated completion reads `--config` and completes `--instance` with the
+available `group\instance` selectors. Enable it for the current shell with one
+of these commands:
+
+```sh
+# zsh
+source <(fortivpn completion zsh)
+
+# bash
+source <(fortivpn completion bash)
+
+# fish
+fortivpn completion fish | source
+```
+
+For example, after typing `--instance comp<Tab>`, completion inserts the
+shell-escaped form of `company\production`.
+
 ## Authentication
 
 ### Username and password
@@ -145,7 +243,29 @@ tokens, or query-string values.
 TLS certificate validation is enabled by default. `--insecure` disables it and
 is intended only for controlled diagnostics.
 
+## IPsec roadmap
+
+IKEv2/IPsec is planned as the next protocol, with SSL-VPN retained for existing
+deployments. IPsec is not implemented yet. See the [migration plan](docs/ipsec-migration.md)
+for architecture, delivery stages, interoperability checks, and gateway migration
+requirements. WebSocket transport is deferred in favor of this work.
+
 ## License
 
 Copyright © 2026 Filippo Ferrazini. This project is licensed under the GNU
 General Public License v3.0. See [LICENSE](LICENSE).
+
+## IPsec sperimentale
+
+È disponibile `fortivpn ipsec connect`, basato su un daemon strongSwan dedicato
+controllato tramite VICI. Il prototipo Linux supporta il profilo di laboratorio
+IKEv2 PSK + EAP-MSCHAPv2 su UDP/NAT-T con split routing IPv4/IPv6.
+Il supporto macOS nativo e le funzionalità TCP/SAML restano da verificare.
+
+Vedi [backend e istruzioni di test](docs/ipsec-backend.md) e
+[configurazione del laboratorio](docs/ipsec-lab-reference.md).
+Il comando è separato dalla configurazione SSL-VPN esistente.
+
+Il trasporto IPsec TCP sperimentale e la build macOS nativa sono descritti nella
+[reference macOS/TCP](docs/ipsec-macos-tcp.md). Il tunnel nativo deve ancora
+superare il collaudo amministrativo sul Mac.

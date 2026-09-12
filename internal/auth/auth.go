@@ -1,5 +1,5 @@
-// Package auth provides authentication implementations independent of the
-// tunnel data plane.
+// Package auth provides FortiGate SSL-VPN authentication implementations. Its
+// client and session-cookie contract must not be used for IPsec authentication.
 package auth
 
 import (

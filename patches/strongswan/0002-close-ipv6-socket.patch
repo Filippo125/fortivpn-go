@@ -1,0 +1,33 @@
+From e1091327b5d7f6cc8ca58931c8dd9b48fc53d42e Mon Sep 17 00:00:00 2001
+From: Markus Theil <markus.theil@secunet.com>
+Date: Fri, 10 Apr 2026 21:25:19 +0200
+Subject: [PATCH] tun-device: Also close IPv6 socket on destruction
+
+Signed-off-by: Markus Theil <markus.theil@secunet.com>
+---
+ src/libstrongswan/networking/tun_device.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/src/libstrongswan/networking/tun_device.c b/src/libstrongswan/networking/tun_device.c
+index b239b2e5933..49cb54f4ebc 100644
+--- a/src/libstrongswan/networking/tun_device.c
++++ b/src/libstrongswan/networking/tun_device.c
+@@ -500,6 +500,10 @@ METHOD(tun_device_t, destroy, void,
+ 	{
+ 		close(this->sock);
+ 	}
++	if (this->sock_v6 > 0)
++	{
++		close(this->sock_v6);
++	}
+ 	DESTROY_IF(this->address);
+ 	free(this);
+ }
+@@ -650,6 +654,7 @@ tun_device_t *tun_device_create(const char *name_tmpl)
+ 		},
+ 		.tunfd = -1,
+ 		.sock = -1,
++		.sock_v6 = -1,
+ 	);
+ 
+ 	if (!init_tun(this, name_tmpl))

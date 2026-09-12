@@ -11,28 +11,34 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/Filippo125/fortivpn-go/internal/auth"
+	appconfig "github.com/Filippo125/fortivpn-go/internal/config"
 	"github.com/Filippo125/fortivpn-go/internal/fortinet"
 	"github.com/Filippo125/fortivpn-go/internal/network"
+	"github.com/Filippo125/fortivpn-go/internal/sslvpn"
 	"github.com/Filippo125/fortivpn-go/internal/tun"
-	"github.com/Filippo125/fortivpn-go/internal/tunnel"
 	"golang.org/x/term"
 )
 
 const usage = `Usage:
-  fortivpn inspect <gateway> --saml [options]
-  fortivpn inspect <gateway> --username <username> [--password <password>] [options]
+  fortivpn inspect [gateway] --saml [options]
+  fortivpn inspect [gateway] --username <username> [--password <password>] [options]
+  fortivpn ipsec connect --credentials FILE --remote-id ID --route PREFIX [options]
   fortivpn tun create [options]
-  fortivpn tunnel probe <gateway> --saml [options]
-  fortivpn tunnel probe <gateway> --username <username> [--password <password>] [options]
-  fortivpn tunnel connect <gateway> --saml [options]
-  fortivpn tunnel connect <gateway> --username <username> [--password <password>] [options]
+  fortivpn tunnel probe [gateway] --saml [options]
+  fortivpn tunnel probe [gateway] --username <username> [--password <password>] [options]
+  fortivpn tunnel connect [gateway] --saml [options]
+  fortivpn tunnel connect [gateway] --username <username> [--password <password>] [options]
+  fortivpn config add-instance --config FILE --instance <group\instance> [options]
+  fortivpn completion <bash|zsh|fish>
 
 Options:
+
+  --config <path>       JSON or YAML configuration file
+  --instance <selector> Instance in group\instance form
   --port <port>          Gateway HTTPS port (default 443)
   --realm <realm>        FortiGate authentication realm
   --ip-mode <mode>       auto, ipv4, ipv6, or dual (default auto)
@@ -77,6 +83,18 @@ func run(args []string, out io.Writer) error {
 		fmt.Fprint(out, usage)
 		return nil
 	}
+	if args[0] == "completion" {
+		return runCompletion(args[1:], out)
+	}
+	if args[0] == "config" {
+		return runConfig(args[1:], out)
+	}
+	if args[0] == "__complete-instances" {
+		return completeInstances(args[1:], out)
+	}
+	if args[0] == "ipsec" {
+		return runIPsec(args[1:], out)
+	}
 	if args[0] != "inspect" {
 		if args[0] == "tun" {
 			return runTun(args[1:], out)
@@ -87,19 +105,25 @@ func run(args []string, out io.Writer) error {
 		return fmt.Errorf("unknown command %q\n%s", args[0], usage)
 	}
 
+	fileConfig, configPath, err := loadConfig(args[1:])
+	if err != nil {
+		return err
+	}
 	fs := flag.NewFlagSet("inspect", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	port := fs.Int("port", 0, "")
-	realm := fs.String("realm", "", "")
-	saml := fs.Bool("saml", false, "")
-	username := fs.String("username", "", "")
-	password := fs.String("password", "", "")
+	fs.String("config", configPath, "")
+	fs.String("instance", "", "")
+	port := fs.Int("port", fileConfig.Port, "")
+	realm := fs.String("realm", fileConfig.Realm, "")
+	saml := fs.Bool("saml", fileConfig.SAML, "")
+	username := fs.String("username", fileConfig.Username, "")
+	password := fs.String("password", fileConfig.Password, "")
 	passwordStdin := fs.Bool("password-stdin", false, "")
-	insecure := fs.Bool("insecure", false, "")
+	insecure := fs.Bool("insecure", fileConfig.Insecure, "")
 	debug := fs.Bool("debug", false, "")
-	ipMode := fs.String("ip-mode", string(network.IPModeAuto), "")
-	browser := fs.String("browser", "chrome", "")
-	timeout := fs.Duration("timeout", 5*time.Minute, "")
+	ipMode := fs.String("ip-mode", defaultString(fileConfig.IPMode, string(network.IPModeAuto)), "")
+	browser := fs.String("browser", defaultString(fileConfig.Browser, "chrome"), "")
+	timeout := fs.Duration("timeout", defaultDuration(fileConfig.Timeout, 5*time.Minute), "")
 	inspectArgs := args[1:]
 	var gateway string
 	// The documented UX is `inspect <gateway> [options]`. The standard flag
@@ -115,8 +139,14 @@ func run(args []string, out io.Writer) error {
 	if gateway == "" && fs.NArg() == 1 {
 		gateway = fs.Arg(0)
 	}
+	if gateway == "" {
+		gateway = fileConfig.Gateway
+	}
 	if gateway == "" || fs.NArg() > 1 {
-		return fmt.Errorf("inspect requires exactly one gateway\n%s", usage)
+		return fmt.Errorf("inspect requires a gateway argument or gateway in --config\n%s", usage)
+	}
+	if *passwordStdin && !flagWasSet(fs, "password") {
+		*password = ""
 	}
 	passwordValue, err := passwordForAuthentication(*saml, *username, *password, *passwordStdin, os.Stdin, os.Stderr)
 	if err != nil {
@@ -131,41 +161,36 @@ func run(args []string, out io.Writer) error {
 		return err
 	}
 
-	client, err := fortinet.NewClient(fortinet.ClientOptions{
-		Gateway:  gateway,
-		Port:     *port,
-		Insecure: *insecure,
-	})
-	if err != nil {
-		return err
-	}
-	if *debug {
-		client.SetDebugWriter(out)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
-
-	fmt.Fprintf(out, "Gateway: %s\n", client.Gateway())
 	var authenticator auth.Authenticator
-	authenticationName := "Username/password"
 	if *saml {
-		authenticationName = "SAML"
-		authenticator = &auth.SAMLAuthenticator{
-			Realm:              *realm,
-			OpenURL:            samlBrowser(*browser, out),
-			OnCallbackListener: samlCallbackListener(out),
-		}
+		authenticator = &auth.SAMLAuthenticator{Realm: *realm, OpenURL: samlBrowser(*browser, out), OnCallbackListener: samlCallbackListener(out)}
 	} else {
 		authenticator = &auth.PasswordAuthenticator{Username: *username, Password: auth.Secret(*password), Realm: *realm}
 	}
-	result, err := authenticator.Authenticate(ctx, client)
+	options := sslvpn.Options{
+		Client:         fortinet.ClientOptions{Gateway: gateway, Port: *port, Insecure: *insecure},
+		Authenticator:  authenticator,
+		IPMode:         mode,
+		OnCleanupError: func(err error) { fmt.Fprintf(out, "Warning: %v\n", err) },
+	}
+	if *debug {
+		options.DebugWriter = out
+	}
+	options.OnAuthenticated = func() {
+		name := "Username/password"
+		if *saml {
+			name = "SAML"
+		}
+		fmt.Fprintf(out, "Authentication: %s OK\n", name)
+	}
+	backend, err := sslvpn.New(options)
 	if err != nil {
 		return err
 	}
-	defer result.Clear()
-	fmt.Fprintf(out, "Authentication: %s OK\n", authenticationName)
-
-	config, err := client.NetworkConfigForIPMode(ctx, mode)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	fmt.Fprintf(out, "Gateway: %s\n", backend.Gateway())
+	config, err := backend.Inspect(ctx)
 	if err != nil {
 		return err
 	}
@@ -242,20 +267,26 @@ func runTunnel(args []string, out io.Writer) error {
 }
 
 func runTunnelProbe(args []string, out io.Writer) error {
-	const tunnelUsage = "Usage: fortivpn tunnel probe <gateway> (--saml | --username user [--password password]) [options]\n"
+	const tunnelUsage = "Usage: fortivpn tunnel probe [gateway] (--saml | --username user [--password password]) [options]\n"
+	fileConfig, configPath, err := loadConfig(args)
+	if err != nil {
+		return err
+	}
 	fs := flag.NewFlagSet("tunnel probe", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	port := fs.Int("port", 0, "")
-	realm := fs.String("realm", "", "")
-	saml := fs.Bool("saml", false, "")
-	username := fs.String("username", "", "")
-	password := fs.String("password", "", "")
+	fs.String("config", configPath, "")
+	fs.String("instance", "", "")
+	port := fs.Int("port", fileConfig.Port, "")
+	realm := fs.String("realm", fileConfig.Realm, "")
+	saml := fs.Bool("saml", fileConfig.SAML, "")
+	username := fs.String("username", fileConfig.Username, "")
+	password := fs.String("password", fileConfig.Password, "")
 	passwordStdin := fs.Bool("password-stdin", false, "")
-	insecure := fs.Bool("insecure", false, "")
+	insecure := fs.Bool("insecure", fileConfig.Insecure, "")
 	debug := fs.Bool("debug", false, "")
-	ipMode := fs.String("ip-mode", string(network.IPModeAuto), "")
-	browser := fs.String("browser", "chrome", "")
-	timeout := fs.Duration("timeout", 5*time.Minute, "")
+	ipMode := fs.String("ip-mode", defaultString(fileConfig.IPMode, string(network.IPModeAuto)), "")
+	browser := fs.String("browser", defaultString(fileConfig.Browser, "chrome"), "")
+	timeout := fs.Duration("timeout", defaultDuration(fileConfig.Timeout, 5*time.Minute), "")
 	probeArgs := args
 	var gateway string
 	if len(probeArgs) > 0 && !strings.HasPrefix(probeArgs[0], "-") {
@@ -268,8 +299,14 @@ func runTunnelProbe(args []string, out io.Writer) error {
 	if gateway == "" && fs.NArg() == 1 {
 		gateway = fs.Arg(0)
 	}
+	if gateway == "" {
+		gateway = fileConfig.Gateway
+	}
 	if gateway == "" || fs.NArg() > 1 {
-		return fmt.Errorf("tunnel probe requires exactly one gateway\n%s", tunnelUsage)
+		return fmt.Errorf("tunnel probe requires a gateway argument or gateway in --config\n%s", tunnelUsage)
+	}
+	if *passwordStdin && !flagWasSet(fs, "password") {
+		*password = ""
 	}
 	passwordValue, err := passwordForAuthentication(*saml, *username, *password, *passwordStdin, os.Stdin, os.Stderr)
 	if err != nil {
@@ -284,60 +321,57 @@ func runTunnelProbe(args []string, out io.Writer) error {
 		return err
 	}
 
-	client, err := fortinet.NewClient(fortinet.ClientOptions{Gateway: gateway, Port: *port, Insecure: *insecure})
-	if err != nil {
-		return err
-	}
-	if *debug {
-		client.SetDebugWriter(out)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
 	var authenticator auth.Authenticator
 	if *saml {
-		authenticator = &auth.SAMLAuthenticator{
-			Realm:              *realm,
-			OpenURL:            samlBrowser(*browser, out),
-			OnCallbackListener: samlCallbackListener(out),
-		}
+		authenticator = &auth.SAMLAuthenticator{Realm: *realm, OpenURL: samlBrowser(*browser, out), OnCallbackListener: samlCallbackListener(out)}
 	} else {
 		authenticator = &auth.PasswordAuthenticator{Username: *username, Password: auth.Secret(*password), Realm: *realm}
 	}
-	result, err := authenticator.Authenticate(ctx, client)
+	options := sslvpn.Options{
+		Client:         fortinet.ClientOptions{Gateway: gateway, Port: *port, Insecure: *insecure},
+		Authenticator:  authenticator,
+		IPMode:         mode,
+		OnCleanupError: func(err error) { fmt.Fprintf(out, "Warning: %v\n", err) },
+	}
+	if *debug {
+		options.DebugWriter = out
+	}
+	backend, err := sslvpn.New(options)
 	if err != nil {
 		return err
 	}
-	defer result.Clear()
-	config, err := client.NetworkConfigForIPMode(ctx, mode)
-	if err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	if err := backend.Probe(ctx); err != nil {
 		return err
 	}
-	tunnel, err := client.OpenTunnel2(ctx, fortinet.Tunnel2Options{DNS: config.DNS})
-	if err != nil {
-		return err
-	}
-	defer tunnel.Close()
-	fmt.Fprintf(out, "Gateway: %s\n", client.Gateway())
+	fmt.Fprintf(out, "Gateway: %s\n", backend.Gateway())
 	fmt.Fprintln(out, "FortiGate TUN endpoint: accepted")
 	fmt.Fprintln(out, "No TUN interface, routes, DNS, or packets were changed.")
 	return nil
 }
 
 func runTunnelConnect(args []string, out io.Writer) error {
-	const tunnelUsage = "Usage: fortivpn tunnel connect <gateway> (--saml | --username user [--password password]) [options]\n"
+	const tunnelUsage = "Usage: fortivpn tunnel connect [gateway] (--saml | --username user [--password password]) [options]\n"
+	fileConfig, configPath, err := loadConfig(args)
+	if err != nil {
+		return err
+	}
 	fs := flag.NewFlagSet("tunnel connect", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	port := fs.Int("port", 0, "")
-	realm := fs.String("realm", "", "")
-	saml := fs.Bool("saml", false, "")
-	username := fs.String("username", "", "")
-	password := fs.String("password", "", "")
+	fs.String("config", configPath, "")
+	fs.String("instance", "", "")
+	port := fs.Int("port", fileConfig.Port, "")
+	realm := fs.String("realm", fileConfig.Realm, "")
+	saml := fs.Bool("saml", fileConfig.SAML, "")
+	username := fs.String("username", fileConfig.Username, "")
+	password := fs.String("password", fileConfig.Password, "")
 	passwordStdin := fs.Bool("password-stdin", false, "")
-	insecure := fs.Bool("insecure", false, "")
+	insecure := fs.Bool("insecure", fileConfig.Insecure, "")
 	debug := fs.Bool("debug", false, "")
-	ipMode := fs.String("ip-mode", string(network.IPModeAuto), "")
-	browser := fs.String("browser", "chrome", "")
-	timeout := fs.Duration("timeout", 5*time.Minute, "")
+	ipMode := fs.String("ip-mode", defaultString(fileConfig.IPMode, string(network.IPModeAuto)), "")
+	browser := fs.String("browser", defaultString(fileConfig.Browser, "chrome"), "")
+	timeout := fs.Duration("timeout", defaultDuration(fileConfig.Timeout, 5*time.Minute), "")
 	connectArgs := args
 	var gateway string
 	if len(connectArgs) > 0 && !strings.HasPrefix(connectArgs[0], "-") {
@@ -350,8 +384,14 @@ func runTunnelConnect(args []string, out io.Writer) error {
 	if gateway == "" && fs.NArg() == 1 {
 		gateway = fs.Arg(0)
 	}
+	if gateway == "" {
+		gateway = fileConfig.Gateway
+	}
 	if gateway == "" || fs.NArg() > 1 {
-		return fmt.Errorf("tunnel connect requires exactly one gateway\n%s", tunnelUsage)
+		return fmt.Errorf("tunnel connect requires a gateway argument or gateway in --config\n%s", tunnelUsage)
+	}
+	if *passwordStdin && !flagWasSet(fs, "password") {
+		*password = ""
 	}
 	passwordValue, err := passwordForAuthentication(*saml, *username, *password, *passwordStdin, os.Stdin, os.Stderr)
 	if err != nil {
@@ -366,121 +406,118 @@ func runTunnelConnect(args []string, out io.Writer) error {
 		return err
 	}
 
-	client, err := fortinet.NewClient(fortinet.ClientOptions{Gateway: gateway, Port: *port, Insecure: *insecure})
-	if err != nil {
-		return err
-	}
-	if *debug {
-		client.SetDebugWriter(out)
-	}
-	authCtx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
 	var authenticator auth.Authenticator
 	if *saml {
-		authenticator = &auth.SAMLAuthenticator{
-			Realm:              *realm,
-			OpenURL:            samlBrowser(*browser, out),
-			OnCallbackListener: samlCallbackListener(out),
-		}
+		authenticator = &auth.SAMLAuthenticator{Realm: *realm, OpenURL: samlBrowser(*browser, out), OnCallbackListener: samlCallbackListener(out)}
 	} else {
 		authenticator = &auth.PasswordAuthenticator{Username: *username, Password: auth.Secret(*password), Realm: *realm}
 	}
-	result, err := authenticator.Authenticate(authCtx, client)
+	options := sslvpn.Options{
+		Client:         fortinet.ClientOptions{Gateway: gateway, Port: *port, Insecure: *insecure},
+		Authenticator:  authenticator,
+		IPMode:         mode,
+		OnCleanupError: func(err error) { fmt.Fprintf(out, "Warning: %v\n", err) },
+	}
+	if *debug {
+		options.DebugWriter = out
+	}
+	backend, err := sslvpn.New(options)
 	if err != nil {
 		return err
 	}
-	defer result.Clear()
-	config, err := client.NetworkConfigForIPMode(authCtx, mode)
+	sessionCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	setupCtx, cancel := context.WithTimeout(sessionCtx, *timeout)
+	defer cancel()
+	active, err := backend.Connect(setupCtx)
 	if err != nil {
 		return err
 	}
-	if !hasTunnelMethod(config, network.TunnelMethod("tun")) {
-		return fmt.Errorf("gateway does not offer the TUN transport (offers: %s)", tunnelMethods(config))
-	}
-	transport, err := client.OpenTunnel2(authCtx, fortinet.Tunnel2Options{DNS: config.DNS})
-	if err != nil {
-		return err
-	}
-	defer transport.Close()
-
-	device, err := tun.Create()
-	if err != nil {
-		return err
-	}
-	defer device.Close()
-	configurer, ok := device.(tun.Configurer)
-	if !ok {
-		return errors.New("native TUN implementation cannot configure the interface")
-	}
-	if err := configurer.Configure(authCtx, tun.Config{IPv4: config.IPv4, IPv6: config.IPv6, MTU: config.MTU}); err != nil {
-		return err
-	}
-	cleanupRoutes, err := tun.ConfigureRoutes(authCtx, device.Name(), config.Routes4, config.Routes6)
-	if err != nil {
-		return err
-	}
-	managedDevice := &routeCleanupDevice{
-		Device:  device,
-		cleanup: cleanupRoutes,
-		onCleanupError: func(err error) {
-			fmt.Fprintf(out, "Warning: %v\n", err)
-		},
-	}
-	defer managedDevice.Close()
-
-	fmt.Fprintf(out, "Gateway: %s\n", client.Gateway())
-	fmt.Fprintf(out, "Interface: %s\n", device.Name())
+	defer active.Close()
+	cancel()
+	info := active.Info()
+	config := info.Config
+	fmt.Fprintf(out, "Gateway: %s\n", backend.Gateway())
+	fmt.Fprintf(out, "Interface: %s\n", info.Interface)
 	printConfig(out, config)
 	if len(config.DNS) > 0 {
 		fmt.Fprintln(out, "\nDNS settings were not changed.")
 	}
 	fmt.Fprintln(out, "VPN tunnel is active. Press Ctrl-C to disconnect.")
-	sessionCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	return (tunnel.PacketEngine{Device: managedDevice, Tunnel: transport}).Run(sessionCtx)
+	return active.Run(sessionCtx)
 }
 
-// routeCleanupDevice removes session routes while the TUN interface still
-// exists. PacketEngine closes its Device to release blocked reads, so a normal
-// defer in runTunnelConnect would otherwise run too late on Linux.
-type routeCleanupDevice struct {
-	tun.Device
-	cleanup        func() error
-	onCleanupError func(error)
-	once           sync.Once
-	closeErr       error
+func loadConfig(args []string) (appconfig.Config, string, error) {
+	path, err := configPath(args)
+	if err != nil {
+		return appconfig.Config{}, "", err
+	}
+	if path == "" {
+		return appconfig.Config{}, "", nil
+	}
+	instance, err := optionValue(args, "instance")
+	if err != nil {
+		return appconfig.Config{}, "", err
+	}
+	cfg, err := appconfig.Load(path, instance)
+	if err != nil {
+		return appconfig.Config{}, "", err
+	}
+	return cfg, path, nil
 }
 
-func (d *routeCleanupDevice) Close() error {
-	d.once.Do(func() {
-		if d.cleanup != nil {
-			if err := d.cleanup(); err != nil && d.onCleanupError != nil {
-				d.onCleanupError(err)
+// configPath reads --config before flag parsing so that the file can provide
+// defaults to all the remaining command-line flags.
+func configPath(args []string) (string, error) {
+	return optionValue(args, "config")
+}
+
+// optionValue reads a named option before flag parsing so configuration can
+// provide defaults for all other flags.
+func optionValue(args []string, name string) (string, error) {
+	var path string
+	for i := 0; i < len(args); i++ {
+		argument := args[i]
+		if argument == "--"+name {
+			if i+1 == len(args) {
+				return "", fmt.Errorf("--%s requires a value", name)
 			}
+			i++
+			path = args[i]
+			continue
 		}
-		d.closeErr = d.Device.Close()
+		if value, found := strings.CutPrefix(argument, "--"+name+"="); found {
+			if value == "" {
+				return "", fmt.Errorf("--%s requires a value", name)
+			}
+			path = value
+		}
+	}
+	return path, nil
+}
+
+func defaultString(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
+func defaultDuration(value, fallback time.Duration) time.Duration {
+	if value == 0 {
+		return fallback
+	}
+	return value
+}
+
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	set := false
+	fs.Visit(func(current *flag.Flag) {
+		if current.Name == name {
+			set = true
+		}
 	})
-	return d.closeErr
-}
-
-func hasTunnelMethod(config *network.Config, method network.TunnelMethod) bool {
-	for _, candidate := range config.TunnelMethods {
-		if candidate == method {
-			return true
-		}
-	}
-	return false
-}
-
-func tunnelMethods(config *network.Config) string {
-	values := make([]string, 0, len(config.TunnelMethods))
-	for _, method := range config.TunnelMethods {
-		values = append(values, string(method))
-	}
-	if len(values) == 0 {
-		return "none"
-	}
-	return strings.Join(values, ", ")
+	return set
 }
 
 func parseIPMode(value string) (network.IPMode, error) {
