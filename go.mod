@@ -1,6 +1,6 @@
 module github.com/Filippo125/fortivpn-go
 
-go 1.25.0
+go 1.27.1
 
 require golang.org/x/term v0.45.0
 

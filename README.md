@@ -12,6 +12,18 @@ can create a native TUN interface to forward the allocated IPv4 and/or IPv6 traf
   available (both are normally present on a standard installation).
 - Administrator privileges for commands that create a TUN interface or install routes.
 
+## Continuous integration builds
+
+GitHub Actions runs formatting, vet, race-enabled tests, and native tests on
+Linux, macOS, and Windows for every push and pull request. After the checks
+pass, it cross-compiles downloadable binaries for macOS, Linux, and Windows on
+both `amd64` and `arm64`. The binaries are available for 14 days in the
+**Artifacts** section of the workflow run, packaged as `.tar.gz` on Unix and
+`.zip` on Windows, with a SHA-256 checksum alongside each archive.
+
+Windows builds support commands that do not require a native TUN device; VPN
+tunnel creation is currently implemented only for macOS and Linux.
+
 ## Configuration file
 
 Use a YAML or JSON file with `--config`. Settings are resolved in this order:
