@@ -90,14 +90,14 @@ jobs:
             goarch: arm64
             binary: fortivpn-linux-arm64
             archive: fortivpn-linux-arm64.tar.gz
-          - goos: windows
-            goarch: amd64
-            binary: fortivpn-windows-amd64.exe
-            archive: fortivpn-windows-amd64.zip
-          - goos: windows
-            goarch: arm64
-            binary: fortivpn-windows-arm64.exe
-            archive: fortivpn-windows-arm64.zip
+#          - goos: windows
+#            goarch: amd64
+#            binary: fortivpn-windows-amd64.exe
+#            archive: fortivpn-windows-amd64.zip
+#          - goos: windows
+#            goarch: arm64
+#            binary: fortivpn-windows-arm64.exe
+#            archive: fortivpn-windows-arm64.zip
 
     steps:
       - name: Check out repository
