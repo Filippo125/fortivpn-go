@@ -61,7 +61,7 @@ instances:
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	err := run([]string{"inspect", "--config", path, "--instance", `employees\primary`, "--password", "secret"}, &output)
+	err := run([]string{"inspect", "--config", path, "--instance", "employees/primary", "--password", "secret"}, &output)
 	if err == nil || strings.Contains(err.Error(), "--instance") || strings.Contains(err.Error(), "requires a gateway") || strings.Contains(err.Error(), "provide --saml") {
 		t.Fatalf("error = %v; selected instance defaults were not used", err)
 	}

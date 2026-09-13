@@ -11,7 +11,7 @@ import (
 )
 
 const addInstanceUsage = `Usage:
-  fortivpn config add-instance --config FILE --instance <group\instance> [options]
+  fortivpn config add-instance --config FILE --instance <group/instance> [options]
 
 Instance options:
   --gateway <host>       FortiGate hostname or address

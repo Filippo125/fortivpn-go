@@ -30,7 +30,7 @@ instances:
     ip_mode: dual
     saml: false
 `)
-	cfg, err := Load(path, `employees\office`)
+	cfg, err := Load(path, "employees/office")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ instances:
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"local", `production\main`, `staging\main`}
+	want := []string{"local", "production/main", "staging/main"}
 	if len(selectors) != len(want) {
 		t.Fatalf("selectors = %#v, want %#v", selectors, want)
 	}
@@ -133,7 +133,7 @@ instances:
 			t.Fatalf("selectors = %#v, want %#v", selectors, want)
 		}
 	}
-	cfg, err := Load(path, `production\main`)
+	cfg, err := Load(path, "production/main")
 	if err != nil || cfg.Gateway != "production.example.test" {
 		t.Fatalf("config = %#v, error = %v", cfg, err)
 	}
@@ -164,7 +164,7 @@ instances:
 	}); err != nil {
 		t.Fatal(err)
 	}
-	cfg, err := Load(path, `company\production`)
+	cfg, err := Load(path, "company/production")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +189,7 @@ instances: []
 	if err := AddInstance(path, Instance{Name: "first", Group: "company", Gateway: "vpn.example.test"}); err != nil {
 		t.Fatal(err)
 	}
-	if cfg, err := Load(path, `company\first`); err != nil || cfg.Gateway != "vpn.example.test" {
+	if cfg, err := Load(path, "company/first"); err != nil || cfg.Gateway != "vpn.example.test" {
 		t.Fatalf("config = %#v, error = %v", cfg, err)
 	}
 }

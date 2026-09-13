@@ -20,7 +20,7 @@ func TestConfigAddInstanceWritesAllExplicitOptions(t *testing.T) {
 	err := run([]string{
 		"config", "add-instance",
 		"--config", path,
-		"--instance", `company\production`,
+		"--instance", "company/production",
 		"--gateway", "vpn.example.test",
 		"--port", "8443",
 		"--realm", "employees",
@@ -34,10 +34,10 @@ func TestConfigAddInstanceWritesAllExplicitOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), `company\production`) {
+	if !strings.Contains(output.String(), "company/production") {
 		t.Fatalf("output = %q", output.String())
 	}
-	cfg, err := appconfig.Load(path, `company\production`)
+	cfg, err := appconfig.Load(path, "company/production")
 	if err != nil {
 		t.Fatal(err)
 	}

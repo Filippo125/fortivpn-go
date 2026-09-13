@@ -32,13 +32,13 @@ const usage = `Usage:
   fortivpn tunnel probe [gateway] --username <username> [--password <password>] [options]
   fortivpn tunnel connect [gateway] --saml [options]
   fortivpn tunnel connect [gateway] --username <username> [--password <password>] [options]
-  fortivpn config add-instance --config FILE --instance <group\instance> [options]
+  fortivpn config add-instance --config FILE --instance <group/instance> [options]
   fortivpn completion <bash|zsh|fish>
 
 Options:
 
   --config <path>       JSON or YAML configuration file
-  --instance <selector> Instance in group\instance form
+  --instance <selector> Instance in group/instance form
   --port <port>          Gateway HTTPS port (default 443)
   --realm <realm>        FortiGate authentication realm
   --ip-mode <mode>       auto, ipv4, ipv6, or dual (default auto)

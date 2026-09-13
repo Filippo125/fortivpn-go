@@ -27,7 +27,7 @@ instances:
 	if err := run([]string{"__complete-instances", "--config", path}, &output); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := output.String(), "company\\production\nsecondary\n"; got != want {
+	if got, want := output.String(), "company/production\nsecondary\n"; got != want {
 		t.Fatalf("completion output = %q, want %q", got, want)
 	}
 }

@@ -16,7 +16,7 @@ can create a native TUN interface to forward the allocated IPv4 and/or IPv6 traf
 
 Use a YAML or JSON file with `--config`. Settings are resolved in this order:
 global values, group values, instance values, and finally command-line options.
-Select an instance with `--instance gruppo\istanza`. If the file contains
+Select an instance with `--instance group/instance`. If the file contains
 exactly one instance, it is selected automatically; an instance without a
 group uses its name alone.
 
@@ -54,7 +54,7 @@ For example:
 
 ```sh
 go run ./cmd/fortivpn tunnel connect \
-  --config ~/.config/fortivpn/config.yaml --instance 'company\production'
+  --config ~/.config/fortivpn/config.yaml --instance company/production
 ```
 
 `globals` supports `insecure`, `ip_mode`, `timeout`, `browser`, `username`, and
@@ -77,7 +77,7 @@ Add an instance without editing the file manually:
 ```sh
 fortivpn config add-instance \
   --config ~/.config/fortivpn/config.yaml \
-  --instance 'company\disaster-recovery' \
+  --instance company/disaster-recovery \
   --gateway vpn-dr.example.com \
   --realm employees \
   --saml \
@@ -93,7 +93,7 @@ flags; boolean overrides also accept forms such as `--saml=false`.
 ### Shell completion
 
 The generated completion reads `--config` and completes `--instance` with the
-available `group\instance` selectors. Enable it for the current shell with one
+available `group/instance` selectors. Enable it for the current shell with one
 of these commands:
 
 ```sh
@@ -108,7 +108,7 @@ fortivpn completion fish | source
 ```
 
 For example, after typing `--instance comp<Tab>`, completion inserts the
-shell-escaped form of `company\production`.
+selector `company/production` without quoting or escaping it.
 
 ## Authentication
 

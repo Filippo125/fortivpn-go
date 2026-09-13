@@ -98,7 +98,7 @@ func (d *Duration) parse(value string) error {
 }
 
 // Load resolves a JSON or YAML configuration. instance uses the canonical
-// "group\\instance" form. A single instance is selected automatically.
+// "group/instance" form. A single instance is selected automatically.
 func Load(path string, instance ...string) (Config, error) {
 	file, info, err := loadFile(path)
 	if err != nil {
@@ -163,19 +163,19 @@ func AddInstance(path string, instance Instance) error {
 	return atomicWrite(path, data, mode)
 }
 
-// ParseInstanceSelector splits the canonical "group\\instance" selector.
-// A selector without a backslash represents an ungrouped instance.
+// ParseInstanceSelector splits the canonical "group/instance" selector.
+// A selector without a slash represents an ungrouped instance.
 func ParseInstanceSelector(value string) (group, instance string, err error) {
-	if strings.Count(value, `\`) > 1 {
-		return "", "", fmt.Errorf("invalid instance selector %q: use group\\instance", value)
+	if strings.Count(value, "/") > 1 {
+		return "", "", fmt.Errorf("invalid instance selector %q: use group/instance", value)
 	}
-	group, instance, qualified := strings.Cut(value, `\`)
+	group, instance, qualified := strings.Cut(value, "/")
 	if !qualified {
 		instance = group
 		group = ""
 	}
 	if strings.TrimSpace(instance) == "" || qualified && strings.TrimSpace(group) == "" {
-		return "", "", fmt.Errorf("invalid instance selector %q: use group\\instance", value)
+		return "", "", fmt.Errorf("invalid instance selector %q: use group/instance", value)
 	}
 	return group, instance, nil
 }
@@ -300,8 +300,8 @@ func validateStructure(path string, file File) error {
 		return fmt.Errorf("globals: timeout must be greater than zero")
 	}
 	for name, group := range file.Groups {
-		if strings.TrimSpace(name) == "" || strings.Contains(name, `\`) {
-			return fmt.Errorf("group names must be non-empty and must not contain a backslash")
+		if strings.TrimSpace(name) == "" || strings.Contains(name, "/") {
+			return fmt.Errorf("group names must be non-empty and must not contain a slash")
 		}
 		if group.IPMode != nil {
 			if err := validateIPMode(*group.IPMode); err != nil {
@@ -317,8 +317,8 @@ func validateStructure(path string, file File) error {
 		if strings.TrimSpace(current.Name) == "" {
 			return fmt.Errorf("config %q contains an instance without a name", path)
 		}
-		if strings.Contains(current.Name, `\`) || strings.Contains(current.Group, `\`) {
-			return fmt.Errorf("instance and group names must not contain a backslash")
+		if strings.Contains(current.Name, "/") || strings.Contains(current.Group, "/") {
+			return fmt.Errorf("instance and group names must not contain a slash")
 		}
 		if current.Group != "" {
 			if _, ok := file.Groups[current.Group]; !ok {
@@ -395,7 +395,7 @@ func selector(group, instance string) string {
 	if group == "" {
 		return instance
 	}
-	return group + `\` + instance
+	return group + "/" + instance
 }
 
 func hasPassword(file File) bool {
