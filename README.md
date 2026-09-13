@@ -24,6 +24,20 @@ both `amd64` and `arm64`. The binaries are available for 14 days in the
 Windows builds support commands that do not require a native TUN device; VPN
 tunnel creation is currently implemented only for macOS and Linux.
 
+## Releases
+
+Pushing a tag whose name starts with `v` runs the release workflow. After the
+tests pass, GitHub publishes a release containing macOS, Linux, and Windows
+binaries for `amd64` and `arm64`, together with SHA-256 checksums. For example:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow can also be started manually from the **Actions** page for an
+existing tag.
+
 ## Configuration file
 
 Use a YAML or JSON file with `--config`. Settings are resolved in this order:
