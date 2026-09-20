@@ -1,0 +1,39 @@
+From ea569867d24376eb4059fcf1df93269cc37d6ff3 Mon Sep 17 00:00:00 2001
+From: Tobias Brunner <tobias@strongswan.org>
+Date: Mon, 18 May 2026 15:41:04 +0200
+Subject: [PATCH] tun-device: Fix setting IPv6 address on Linux
+
+Unlike `struct ifreq` that's used for IPv4, `struct in6_ifreq` contains
+not a `struct sockaddr[_in6]` but only a `struct in6_addr`.
+
+Setting addresses like this is currently not used on Linux (the feature
+was added to install virtual IPs on FreeBSD/macOS).
+
+Fixes: fccc76449dc5 ("tun-device: Fix handling of IPv6 addresses")
+---
+ src/libstrongswan/networking/tun_device.c | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/libstrongswan/networking/tun_device.c b/src/libstrongswan/networking/tun_device.c
+index 49cb54f4ebc..34785fe403f 100644
+--- a/src/libstrongswan/networking/tun_device.c
++++ b/src/libstrongswan/networking/tun_device.c
+@@ -159,6 +159,7 @@ static bool set_address_v4(private_tun_device_t *this, host_t *addr,
+ static bool set_address_v6(private_tun_device_t *this, host_t *addr,
+ 						   uint8_t netmask)
+ {
++	struct sockaddr_in6 *sin6;
+ 	struct in6_ifreq ifr6 = {0};
+ 	struct ifreq ifr = {0};
+ 
+@@ -170,8 +171,8 @@ static bool set_address_v6(private_tun_device_t *this, host_t *addr,
+ 		return FALSE;
+ 	}
+ 
+-	memcpy(&ifr6.ifr6_addr, addr->get_sockaddr(addr),
+-		   *addr->get_sockaddr_len(addr));
++	sin6 = (struct sockaddr_in6*)addr->get_sockaddr(addr);
++	memcpy(&ifr6.ifr6_addr, &sin6->sin6_addr, sizeof(ifr6.ifr6_addr));
+ 	ifr6.ifr6_prefixlen = netmask;
+ 	ifr6.ifr6_ifindex = ifr.ifr_ifindex;
+ 	if (ioctl(this->sock_v6, SIOCSIFADDR, &ifr6) < 0)

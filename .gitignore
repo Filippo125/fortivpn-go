@@ -6,3 +6,6 @@
 
 # macOS metadata.
 .DS_Store
+
+# Private native IPsec runtime, build artifacts and lab credentials.
+/.local/

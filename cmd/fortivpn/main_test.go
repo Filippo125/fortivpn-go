@@ -5,12 +5,12 @@ import (
 	"context"
 	"errors"
 	"io"
-	"reflect"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/Filippo125/fortivpn-go/internal/network"
-	"github.com/Filippo125/fortivpn-go/internal/tun"
 )
 
 func TestInspectAcceptsGatewayBeforeOptions(t *testing.T) {
@@ -26,6 +26,54 @@ func TestInspectAcceptsGatewayAfterOptions(t *testing.T) {
 	err := run([]string{"inspect", "--username", "alice", "--password", "secret", "--timeout", "1ms", "vpn.example.test"}, &output)
 	if err == nil || strings.Contains(err.Error(), "inspect requires") || strings.Contains(err.Error(), "provide --saml") {
 		t.Fatalf("error = %v; gateway after flags was not parsed", err)
+	}
+}
+
+func TestInspectReadsGatewayAndUsernameFromConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fortivpn.yaml")
+	config := "globals:\n  username: alice\n  timeout: 1ms\ninstances:\n  - name: main\n    gateway: vpn.example.test\n"
+	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err := run([]string{"inspect", "--config", path, "--password", "secret"}, &output)
+	if err == nil || strings.Contains(err.Error(), "requires a gateway") || strings.Contains(err.Error(), "provide --saml") {
+		t.Fatalf("error = %v; configuration defaults were not used", err)
+	}
+}
+
+func TestInspectSelectsStructuredConfigInstance(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fortivpn.yaml")
+	config := `
+globals:
+  timeout: 1ms
+groups:
+  employees:
+    username: alice
+instances:
+  - name: primary
+    group: employees
+    gateway: vpn.example.test
+  - name: secondary
+    gateway: other.example.test
+`
+	if err := os.WriteFile(path, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err := run([]string{"inspect", "--config", path, "--instance", "employees/primary", "--password", "secret"}, &output)
+	if err == nil || strings.Contains(err.Error(), "--instance") || strings.Contains(err.Error(), "requires a gateway") || strings.Contains(err.Error(), "provide --saml") {
+		t.Fatalf("error = %v; selected instance defaults were not used", err)
+	}
+}
+
+func TestConfigPathAcceptsEqualsSyntaxAndRequiresValue(t *testing.T) {
+	path, err := configPath([]string{"--config=one.conf", "--config", "two.conf"})
+	if err != nil || path != "two.conf" {
+		t.Fatalf("configPath() = %q, %v", path, err)
+	}
+	if _, err := configPath([]string{"--config"}); err == nil {
+		t.Fatal("missing config path was accepted")
 	}
 }
 
@@ -48,51 +96,6 @@ func TestReadPasswordReadsOneLine(t *testing.T) {
 		t.Fatalf("password = %q, want %q", got, want)
 	}
 }
-
-func TestTunnelMethods(t *testing.T) {
-	config := &network.Config{TunnelMethods: []network.TunnelMethod{"websocket", "tun"}}
-	if !hasTunnelMethod(config, "tun") {
-		t.Fatal("TUN transport was not found")
-	}
-	if got, want := tunnelMethods(config), "websocket, tun"; got != want {
-		t.Fatalf("tunnel methods = %q, want %q", got, want)
-	}
-}
-
-func TestRouteCleanupDeviceCleansRoutesBeforeClosingDevice(t *testing.T) {
-	var steps []string
-	device := &recordingDevice{close: func() error {
-		steps = append(steps, "close")
-		return nil
-	}}
-	managed := &routeCleanupDevice{
-		Device: device,
-		cleanup: func() error {
-			steps = append(steps, "cleanup")
-			return nil
-		},
-	}
-	if err := managed.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := managed.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"cleanup", "close"}; !reflect.DeepEqual(steps, want) {
-		t.Fatalf("close steps = %q, want %q", steps, want)
-	}
-}
-
-type recordingDevice struct {
-	close func() error
-}
-
-func (d *recordingDevice) Name() string              { return "test0" }
-func (d *recordingDevice) Read([]byte) (int, error)  { return 0, nil }
-func (d *recordingDevice) Write([]byte) (int, error) { return 0, nil }
-func (d *recordingDevice) Close() error              { return d.close() }
-
-var _ tun.Device = (*recordingDevice)(nil)
 
 func TestParseIPMode(t *testing.T) {
 	mode, err := parseIPMode("dual-stack")

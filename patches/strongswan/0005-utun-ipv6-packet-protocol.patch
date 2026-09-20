@@ -1,0 +1,49 @@
+From 7c5d4982c3b84c128d68ba23eca5572d3f9c9fea Mon Sep 17 00:00:00 2001
+From: Filippo Ferrazini <filippo@example.invalid>
+Date: Sat, 19 Sep 2026 16:00:00 +0200
+Subject: [PATCH] tun-device: Select the utun protocol from the IP version
+
+macOS utun requires a 32-bit address-family header on every packet.  The
+existing implementation always uses AF_INET, which prevents decrypted IPv6
+packets from being delivered to the network stack.  Select AF_INET or
+AF_INET6 from the IP version nibble and reject invalid packets.
+---
+ src/libstrongswan/networking/tun_device.c | 20 +++++++++++++++++---
+ 1 file changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/src/libstrongswan/networking/tun_device.c b/src/libstrongswan/networking/tun_device.c
+index 34785fe403f..56d2ecf0673 100644
+--- a/src/libstrongswan/networking/tun_device.c
++++ b/src/libstrongswan/networking/tun_device.c
+@@ -431,9 +431,26 @@ METHOD(tun_device_t, write_packet, bool,
+ 	ssize_t s;
+ 
+ #ifdef __APPLE__
+-	/* UTUN's expect the packets to be prepended by a 32-bit protocol number
+-	 * instead of parsing the packet again, we assume IPv4 for now */
+-	uint32_t proto = htonl(AF_INET);
++	uint32_t proto;
++
++	/* UTUNs expect packets to be prepended by a 32-bit address family. */
++	if (!packet.len)
++	{
++		return FALSE;
++	}
++	switch (packet.ptr[0] >> 4)
++	{
++		case 4:
++			proto = htonl(AF_INET);
++			break;
++		case 6:
++			proto = htonl(AF_INET6);
++			break;
++		default:
++			DBG1(DBG_LIB, "invalid IP packet written to TUN device %s",
++				 this->if_name);
++			return FALSE;
++	}
+ 	packet = chunk_cata("cc", chunk_from_thing(proto), packet);
+ #endif
+ 	s = write(this->tunfd, packet.ptr, packet.len);
+-- 
+2.50.1

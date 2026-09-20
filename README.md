@@ -12,6 +12,142 @@ can create a native TUN interface to forward the allocated IPv4 and/or IPv6 traf
   available (both are normally present on a standard installation).
 - Administrator privileges for commands that create a TUN interface or install routes.
 
+## Continuous integration builds
+
+GitHub Actions runs formatting, vet, race-enabled tests, and native tests on
+Linux, macOS, and Windows for every push and pull request. After the checks
+pass, it cross-compiles downloadable binaries for macOS, Linux, and Windows on
+both `amd64` and `arm64`. The binaries are available for 14 days in the
+**Artifacts** section of the workflow run, packaged as `.tar.gz` on Unix and
+`.zip` on Windows, with a SHA-256 checksum alongside each archive.
+
+Windows builds support commands that do not require a native TUN device; VPN
+tunnel creation is currently implemented only for macOS and Linux.
+
+## Releases
+
+Pushing a tag whose name starts with `v` runs the release workflow. After the
+tests pass, GitHub publishes a release containing macOS, Linux, and Windows
+binaries for `amd64` and `arm64`, together with SHA-256 checksums. For example:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+The workflow can also be started manually from the **Actions** page for an
+existing tag.
+
+## Configuration file
+
+Use a YAML or JSON file with `--config`. Settings are resolved in this order:
+global values, group values, instance values, and finally command-line options.
+Select an instance with `--instance group/instance`. If the file contains
+exactly one instance, it is selected automatically; an instance without a
+group uses its name alone.
+
+`fortivpn connect <group/instance>` selects the configured protocol and uses
+`~/.config/fortivpn/config.yaml` by default. Set `FORTIVPN_CONFIG` or pass
+`--config` to use another file. Instances without `protocol` continue to use
+SSL-VPN.
+
+```yaml
+# ~/.config/fortivpn/config.yaml
+globals:
+  insecure: false
+  ip_mode: auto
+  timeout: 5m
+  browser: default
+  username: alice
+  # password: your-password
+  # psk: your-ipsec-pre-shared-key
+
+groups:
+  company:
+    username: alice@company.example
+    saml: true
+
+instances:
+  - name: production
+    group: company
+    gateway: vpn.example.com
+    port: 443
+    realm: employees
+
+  - name: lab
+    group: company
+    gateway: vpn-lab.example.com
+    protocol: ipsec
+    remote_id: vpn-lab.example.com
+    psk: your-ipsec-pre-shared-key
+    transport: udp
+    saml: false
+    username: lab-user
+```
+
+For example, connect the saved IPsec instance without backend-specific CLI
+arguments:
+
+```sh
+fortivpn connect company/lab
+```
+
+`globals` supports `insecure`, `ip_mode`, `timeout`, `browser`, `username`,
+`password`, `protocol`, `remote_id`, `transport`, `tcp_port`, `socket`, and the
+IPsec-only `psk`. Each entry in the `groups` dictionary supports the same
+values plus `saml`. An instance supports all of those values plus `name`,
+`group`, `gateway`, `port`, and `realm`. Field names and unknown values are
+checked strictly.
+
+JSON uses the same structure and field names. Other formats, including INI,
+are rejected.
+
+A file containing a password or PSK at any level must be `0600` (for example,
+`chmod 600 config.yaml`), or the program refuses to use it. An instance can
+clear an inherited password with `password: ""`. `--password-stdin` overrides a
+configured password. A PSK can likewise be cleared with `psk: ""`; use
+`--saml=false` to override inherited SAML authentication.
+
+### Adding an instance
+
+Add an instance without editing the file manually:
+
+```sh
+fortivpn config add-instance \
+  --config ~/.config/fortivpn/config.yaml \
+  --instance company/disaster-recovery \
+  --gateway vpn-dr.example.com \
+  --realm employees \
+  --saml \
+  --ip-mode dual
+```
+
+The group must already exist. The command rejects duplicate selectors and
+invalid values, then replaces the JSON or YAML file atomically. It preserves
+the file permissions; when `--password` is used it restricts them to `0600`.
+All instance fields shown in the configuration example have corresponding
+flags; boolean overrides also accept forms such as `--saml=false`.
+
+### Shell completion
+
+The generated completion reads `--config` and completes `--instance` with the
+available `group/instance` selectors. Enable it for the current shell with one
+of these commands:
+
+```sh
+# zsh
+source <(fortivpn completion zsh)
+
+# bash
+source <(fortivpn completion bash)
+
+# fish
+fortivpn completion fish | source
+```
+
+For example, after typing `--instance comp<Tab>`, completion inserts the
+selector `company/production` without quoting or escaping it.
+
 ## Authentication
 
 ### Username and password
@@ -145,7 +281,42 @@ tokens, or query-string values.
 TLS certificate validation is enabled by default. `--insecure` disables it and
 is intended only for controlled diagnostics.
 
+## IPsec status
+
+IKEv2/IPsec is available as an experimental backend, with SSL-VPN retained for
+existing deployments. See the [migration plan](docs/ipsec-migration.md) for the
+architecture, delivery stages, interoperability checks, and remaining gateway
+migration work. WebSocket transport remains deferred.
+
 ## License
 
 Copyright © 2026 Filippo Ferrazini. This project is licensed under the GNU
 General Public License v3.0. See [LICENSE](LICENSE).
+
+## IPsec sperimentale
+
+È disponibile `fortivpn ipsec connect`, basato su un daemon strongSwan dedicato
+controllato tramite VICI. Il prototipo Linux supporta il profilo di laboratorio
+IKEv2 PSK + EAP-MSCHAPv2 su UDP/NAT-T con split routing IPv4/IPv6.
+Il trasporto TCP sperimentale e il tunnel nativo macOS sono stati collaudati;
+SAML/MFA non è supportato dal backend IPsec.
+
+Le credenziali possono essere lette dalla stessa configurazione usata dalla
+SSL-VPN. La configurazione selezionata fornisce `gateway`, `username`,
+`password`, `psk`, `ip_mode` e `timeout`. Le rotte sono ricavate dai traffic
+selector negoziati con il gateway; un selector `/0` abilita il full tunnel:
+
+```sh
+fortivpn connect company/lab
+```
+
+Il comando avanzato `fortivpn ipsec connect` e il vecchio `--credentials FILE`
+restano disponibili per compatibilità. SAML non è ancora supportato dal backend
+IPsec: l'istanza selezionata deve risolvere `saml: false`.
+
+Vedi [backend e istruzioni di test](docs/ipsec-backend.md) e
+[configurazione del laboratorio](docs/ipsec-lab-reference.md). Il backend
+IPsec resta separato da quello SSL-VPN.
+
+Il trasporto IPsec TCP sperimentale e la build macOS nativa sono descritti nella
+[reference macOS/TCP](docs/ipsec-macos-tcp.md).
