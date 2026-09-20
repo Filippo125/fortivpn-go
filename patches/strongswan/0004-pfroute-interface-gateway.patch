@@ -1,0 +1,73 @@
+From bf165afb780b7ba4edd2092b3348038c0a14b7ae Mon Sep 17 00:00:00 2001
+From: Tobias Brunner <tobias@strongswan.org>
+Date: Tue, 28 Sep 2021 10:10:04 +0200
+Subject: [PATCH] kernel-pfroute: Route via interface if we don't have a next
+ hop
+
+Compared to RTA_IFP, the format is different when passing an interface
+as RTA_GATEWAY, it requires the interface's address and not its name.
+---
+ .../kernel_pfroute/kernel_pfroute_net.c       | 35 ++++++++++++++++++-
+ 1 file changed, 34 insertions(+), 1 deletion(-)
+
+diff --git a/src/libcharon/plugins/kernel_pfroute/kernel_pfroute_net.c b/src/libcharon/plugins/kernel_pfroute/kernel_pfroute_net.c
+index 815ba255874..5caf5f2c014 100644
+--- a/src/libcharon/plugins/kernel_pfroute/kernel_pfroute_net.c
++++ b/src/libcharon/plugins/kernel_pfroute/kernel_pfroute_net.c
+@@ -1,5 +1,5 @@
+ /*
+- * Copyright (C) 2009-2016 Tobias Brunner
++ * Copyright (C) 2009-2024 Tobias Brunner
+  *
+  * Copyright (C) secunet Security Networks AG
+  *
+@@ -1443,6 +1443,35 @@ static void add_rt_ifname(struct rt_msghdr *hdr, int type, char *name)
+ 	}
+ }
+ 
++/**
++ * Append an interface address sockaddr_dl to routing message
++ */
++static void add_rt_ifaddr(struct rt_msghdr *hdr, int type, char *name)
++{
++	struct ifaddrs *ifap, *ifa;
++	struct sockaddr_dl *sdl;
++
++	if (getifaddrs(&ifap) < 0)
++	{
++		return;
++	}
++
++	for (ifa = ifap; ifa != NULL; ifa = ifa->ifa_next)
++	{
++		if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_LINK ||
++			!streq(name, ifa->ifa_name))
++		{
++			continue;
++		}
++		sdl = (struct sockaddr_dl*)ifa->ifa_addr;
++		memcpy((char*)hdr + hdr->rtm_msglen, sdl, sdl->sdl_len);
++		hdr->rtm_msglen += SA_LEN(sdl->sdl_len);
++		hdr->rtm_addrs |= type;
++		break;
++	}
++	freeifaddrs(ifap);
++}
++
+ /**
+  * Add or remove a route
+  */
+@@ -1519,6 +1548,10 @@ static status_t manage_route(private_kernel_pfroute_net_t *this, int op,
+ 				{
+ 					add_rt_addr(&msg.hdr, RTA_GATEWAY, gateway);
+ 				}
++				else if (if_name)
++				{
++					add_rt_ifaddr(&msg.hdr, RTA_GATEWAY, if_name);
++				}
+ 				break;
+ 			default:
+ 				break;
+-- 
+2.50.1
+
