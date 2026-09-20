@@ -16,7 +16,7 @@ import (
 )
 
 func options() Options {
-	return Options{Gateway: netip.MustParseAddr("192.0.2.1"), RemoteID: "192.0.2.1", Username: "alice", Password: Secret("test-password"), PSK: Secret("test-psk"), IPMode: network.IPModeIPv4, Routes: []netip.Prefix{netip.MustParsePrefix("10.1.0.0/24")}}
+	return Options{Gateway: netip.MustParseAddr("192.0.2.1"), RemoteID: "192.0.2.1", Username: "alice", Password: Secret("test-password"), PSK: Secret("test-psk"), IPMode: network.IPModeIPv4}
 }
 func msg(values map[string]any) *vici.Message {
 	m, err := vici.MarshalMessage(values)
@@ -73,18 +73,13 @@ func (f *fakeControl) list(context.Context, string) ([]*vici.Message, error) {
 
 func TestValidateRejectsUnsafeAndUnsupportedOptions(t *testing.T) {
 	cases := map[string]func(*Options){
-		"tcp-loopback-route": func(o *Options) { o.Transport = "tcp"; o.Routes = []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8")} },
-		"unknown-transport":  func(o *Options) { o.Transport = "https" },
-		"tcp-port-with-udp":  func(o *Options) { o.TCPPort = 443 },
-		"default-route":      func(o *Options) { o.Routes = []netip.Prefix{netip.MustParsePrefix("0.0.0.0/0")} },
-		"gateway-route":      func(o *Options) { o.Routes = []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")} },
-		"host-bits":          func(o *Options) { o.Routes = []netip.Prefix{netip.MustParsePrefix("10.1.0.3/24")} },
-		"wildcard":           func(o *Options) { o.RemoteID = "%any" },
-		"missing-id":         func(o *Options) { o.RemoteID = "" },
-		"ipv6-only":          func(o *Options) { o.IPMode = network.IPModeIPv6 },
-		"dual-no-route6":     func(o *Options) { o.IPMode = network.IPModeDualStack },
-		"secret-newline":     func(o *Options) { o.Password = "hidden\nsecret" },
-		"relative-socket":    func(o *Options) { o.SocketPath = "local.vici" },
+		"unknown-transport": func(o *Options) { o.Transport = "https" },
+		"tcp-port-with-udp": func(o *Options) { o.TCPPort = 443 },
+		"wildcard":          func(o *Options) { o.RemoteID = "%any" },
+		"missing-id":        func(o *Options) { o.RemoteID = "" },
+		"ipv6-only":         func(o *Options) { o.IPMode = network.IPModeIPv6 },
+		"secret-newline":    func(o *Options) { o.Password = "hidden\nsecret" },
+		"relative-socket":   func(o *Options) { o.SocketPath = "local.vici" },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -94,6 +89,57 @@ func TestValidateRejectsUnsafeAndUnsupportedOptions(t *testing.T) {
 				t.Fatal("accepted invalid configuration")
 			}
 		})
+	}
+}
+
+func TestConfigProposesBroadSelectorsForNegotiatedRoutes(t *testing.T) {
+	o := options()
+	o.IPMode = network.IPModeDualStack
+	b, err := New(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection := b.config("test")["test"].(map[string]any)
+	children := connection["children"].(map[string]any)
+	if len(children) != 2 {
+		t.Fatalf("children = %#v", children)
+	}
+	want := []string{"0.0.0.0/0", "::/0"}
+	for i, selector := range want {
+		child := children[childName("test", i)].(map[string]any)
+		got := child["remote_ts"].([]string)
+		if !reflect.DeepEqual(got, []string{selector}) {
+			t.Fatalf("child %d remote_ts = %#v", i, got)
+		}
+	}
+}
+
+func TestAcceptsNegotiatedDualStackRoutes(t *testing.T) {
+	o := options()
+	o.IPMode = network.IPModeDualStack
+	b, err := New(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := state("test")
+	sa := m.Get("test").(*vici.Message)
+	_ = sa.Set("local-vips", []string{"10.250.0.10", "2001:db8:200::10"})
+	children := sa.Get("child-sas").(*vici.Message)
+	_ = children.Set("child-2", map[string]any{
+		"name":      childName("test", 1),
+		"state":     "INSTALLED",
+		"mode":      "TUNNEL",
+		"protocol":  "ESP",
+		"encap":     "yes",
+		"local-ts":  []string{"2001:db8:200::10/128"},
+		"remote-ts": []string{"::/0"},
+	})
+	info, err := b.info("test", []*vici.Message{m})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info.Config.Routes4) != 1 || len(info.Config.Routes6) != 1 || info.Config.Routes6[0].Destination.String() != "::/0" {
+		t.Fatalf("negotiated routes = IPv4 %v, IPv6 %v", info.Config.Routes4, info.Config.Routes6)
 	}
 }
 func TestConnectAndCloseOwnOnlyNamedResources(t *testing.T) {
@@ -164,7 +210,7 @@ func TestSetupFailureCleansWithIndependentContextAndRedactsErrors(t *testing.T) 
 		})
 	}
 }
-func TestRejectsNegotiatedRoutesOutsideRequestAndCleans(t *testing.T) {
+func TestAcceptsNegotiatedDefaultRoute(t *testing.T) {
 	b, _ := New(options())
 	f := &fakeControl{mutate: func(m *vici.Message) {
 		sa := m.Get(m.Keys()[0]).(*vici.Message)
@@ -173,11 +219,43 @@ func TestRejectsNegotiatedRoutesOutsideRequestAndCleans(t *testing.T) {
 		_ = child.Set("remote-ts", []string{"0.0.0.0/0"})
 	}}
 	b.control = f
-	if s, err := b.Connect(context.Background()); err == nil || s != nil {
-		t.Fatalf("Connect = %v, %v", s, err)
+	s, err := b.Connect(context.Background())
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(strings.Join(f.calls, ","), "terminate,unload-conn") {
-		t.Fatal(f.calls)
+	if got := s.Info().Config.Routes4; len(got) != 1 || got[0].Destination.String() != "0.0.0.0/0" {
+		t.Fatalf("routes = %v", got)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRejectsUnsafeNegotiatedRoutes(t *testing.T) {
+	cases := map[string]struct {
+		transport string
+		routes    []string
+	}{
+		"gateway":      {routes: []string{"192.0.2.0/24"}},
+		"tcp-loopback": {transport: "tcp", routes: []string{"127.0.0.0/8"}},
+		"wrong-family": {routes: []string{"2001:db8::/64"}},
+	}
+	for testName, test := range cases {
+		t.Run(testName, func(t *testing.T) {
+			o := options()
+			o.Transport = test.transport
+			b, err := New(o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := state("test")
+			sa := m.Get("test").(*vici.Message)
+			child := sa.Get("child-sas").(*vici.Message).Get("child-1").(*vici.Message)
+			_ = child.Set("remote-ts", test.routes)
+			if _, err := b.info("test", []*vici.Message{m}); err == nil {
+				t.Fatal("accepted unsafe negotiated route")
+			}
+		})
 	}
 }
 func TestRejectsMissingIPv6AndIncorrectIdentity(t *testing.T) {

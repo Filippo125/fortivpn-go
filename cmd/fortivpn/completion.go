@@ -21,13 +21,19 @@ _fortivpn_instance_selectors() {
       --config=*) config="${words[index]#--config=}" ;;
     esac
   done
-  [[ -z "$config" ]] && return
+	if [[ -z "$config" ]]; then
+		config="${FORTIVPN_CONFIG:-$HOME/.config/fortivpn/config.yaml}"
+	fi
   local -a selectors
   selectors=("${(@f)$(command "$executable" __complete-instances --config "$config" 2>/dev/null)}")
   compadd -- "${selectors[@]}"
 }
 
 _fortivpn() {
+	if [[ "${words[2]}" == "connect" && CURRENT -eq 3 ]]; then
+		_fortivpn_instance_selectors
+		return
+	fi
   if [[ "${words[CURRENT-1]}" == "--instance" ]]; then
     _fortivpn_instance_selectors
     return
@@ -61,6 +67,15 @@ const bashCompletion = `_fortivpn() {
       config="${word#--config=}"
     fi
   done
+	[[ -z "$config" ]] && config="${FORTIVPN_CONFIG:-$HOME/.config/fortivpn/config.yaml}"
+	if [[ "$COMP_CWORD" -eq 2 && "${COMP_WORDS[1]}" == "connect" ]]; then
+		local selector
+		COMPREPLY=()
+		while IFS= read -r selector; do
+			[[ "$selector" == "$cur"* ]] && COMPREPLY+=("$selector")
+		done < <("${COMP_WORDS[0]}" __complete-instances --config "$config" 2>/dev/null)
+		return
+	fi
   if [[ "$prev" == "--instance" && -n "$config" ]]; then
     local selector
     COMPREPLY=()
@@ -73,7 +88,7 @@ const bashCompletion = `_fortivpn() {
     COMPREPLY=( $(compgen -f -- "$cur") )
     return
   fi
-  COMPREPLY=( $(compgen -W '--config --instance --port --realm --ip-mode --browser --saml --username --password --password-stdin --timeout --insecure --debug' -- "$cur") )
+  COMPREPLY=( $(compgen -W '--config --instance --protocol --port --realm --remote-id --transport --tcp-port --socket --ip-mode --browser --saml --username --password --password-stdin --psk --timeout --insecure --debug' -- "$cur") )
 }
 
 complete -F _fortivpn fortivpn
@@ -92,11 +107,18 @@ const fishCompletion = `function __fortivpn_instance_selectors
             set config (string replace -- '--config=' '' "$tokens[$i]")
         end
     end
-    test -n "$config"; and command fortivpn __complete-instances --config "$config" 2>/dev/null
+	if test -z "$config"
+		set config "$FORTIVPN_CONFIG"
+	end
+	if test -z "$config"
+		set config "$HOME/.config/fortivpn/config.yaml"
+	end
+	command fortivpn __complete-instances --config "$config" 2>/dev/null
 end
 
 complete -c fortivpn -l config -r -F -d 'JSON or YAML configuration file'
 complete -c fortivpn -l instance -r -a '(__fortivpn_instance_selectors)' -d 'Instance selector'
+complete -c fortivpn -n '__fish_seen_subcommand_from connect' -a '(__fortivpn_instance_selectors)' -d 'Instance selector'
 `
 
 func runCompletion(args []string, out io.Writer) error {

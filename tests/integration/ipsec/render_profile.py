@@ -10,19 +10,12 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--secrets', required=True)
 parser.add_argument('--output', required=True)
 parser.add_argument('--dual', action='store_true')
-parser.add_argument('--route4', required=True)
-parser.add_argument('--route6')
 args = parser.parse_args()
 source = Path(args.secrets)
 if source.stat().st_mode & 0o077:
     raise SystemExit('secrets file must have permissions 0600')
 cfg = json.loads(source.read_text())
 ipaddress.ip_address(cfg['gateway'])
-ipaddress.ip_network(args.route4, strict=True)
-if args.dual:
-    if not args.route6:
-        raise SystemExit('--route6 is required with --dual')
-    ipaddress.ip_network(args.route6, strict=True)
 for field in ('gateway', 'username', 'password', 'psk'):
     value = cfg[field]
     if not isinstance(value, str) or not value or any(c in value for c in '\n\r\x00"\\'):
@@ -31,7 +24,7 @@ vips = '0.0.0.0, ::' if args.dual else '0.0.0.0'
 child6 = f'''
             lab6 {{
                 local_ts = dynamic
-                remote_ts = {args.route6}
+                remote_ts = ::/0
                 esp_proposals = aes256-sha256-modp2048
                 start_action = none
             }}
@@ -57,7 +50,7 @@ profile = f'''connections {{
         children {{
             lab4 {{
                 local_ts = dynamic
-                remote_ts = {args.route4}
+                remote_ts = 0.0.0.0/0
                 esp_proposals = aes256-sha256-modp2048
                 start_action = none
             }}

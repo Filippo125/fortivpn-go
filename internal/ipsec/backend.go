@@ -37,11 +37,11 @@ type Options struct {
 	Password   Secret
 	PSK        Secret
 	IPMode     network.IPMode
-	Routes     []netip.Prefix
 }
 
-// Validate restricts this prototype to the verified profile. Traffic selectors
-// are explicit: broad gateway-provided default routes are never requested.
+// Validate restricts this prototype to the verified profile. The backend
+// proposes broad traffic selectors and uses the selectors negotiated by the
+// gateway as routes, including default selectors for full-tunnel profiles.
 func (o Options) Validate() error {
 	if o.Transport != "" && o.Transport != "udp" && o.Transport != "tcp" {
 		return errors.New("IPsec transport must be udp or tcp")
@@ -66,31 +66,6 @@ func (o Options) Validate() error {
 	}
 	if o.IPMode != network.IPModeIPv4 && o.IPMode != network.IPModeDualStack {
 		return errors.New("IPsec prototype supports ip-mode ipv4 or dual")
-	}
-	if len(o.Routes) == 0 || len(o.Routes) > 32 {
-		return errors.New("IPsec requires 1 to 32 explicit split routes")
-	}
-	seen := map[netip.Prefix]bool{}
-	v4, v6 := false, false
-	for _, p := range o.Routes {
-		if !p.IsValid() || p != p.Masked() || p.Bits() == 0 || p.Addr().Is4In6() || p.Addr().IsMulticast() || p.Contains(o.Gateway) {
-			return errors.New("IPsec routes must be canonical split prefixes excluding the gateway")
-		}
-		if o.Transport == "tcp" && p.Contains(netip.MustParseAddr("127.0.0.1")) {
-			return errors.New("TCP split routes must exclude the loopback relay")
-		}
-		if seen[p] {
-			return errors.New("duplicate IPsec split route")
-		}
-		seen[p] = true
-		if p.Addr().Is4() {
-			v4 = true
-		} else {
-			v6 = true
-		}
-	}
-	if !v4 || (o.IPMode == network.IPModeIPv4 && v6) || (o.IPMode == network.IPModeDualStack && !v6) {
-		return errors.New("IPsec split routes must match the requested address families")
 	}
 	return nil
 }
@@ -155,7 +130,6 @@ func New(o Options) (*Backend, error) {
 	if o.SocketPath == "" {
 		o.SocketPath = "/var/run/charon.vici"
 	}
-	o.Routes = append([]netip.Prefix(nil), o.Routes...)
 	return &Backend{options: o, control: socketControl{path: o.SocketPath}}, nil
 }
 
@@ -200,7 +174,7 @@ func (b *Backend) Connect(ctx context.Context) (_ session.Session, err error) {
 	if _, err = b.control.call(ctx, "load-conn", b.config(name)); err != nil {
 		return nil, fmt.Errorf("load IPsec connection: %w", err)
 	}
-	for i := range b.options.Routes {
+	for i := range b.childSelectors() {
 		s.initiated = true
 		if _, err = b.control.call(ctx, "initiate", map[string]any{"ike": name, "child": childName(name, i), "timeout": "30000"}); err != nil {
 			return nil, fmt.Errorf("negotiate IPsec child %d: %w", i, err)
@@ -259,10 +233,19 @@ func (b *Backend) preflight(ctx context.Context) error {
 }
 
 func childName(name string, i int) string { return fmt.Sprintf("%s-%d", name, i) }
+
+func (b *Backend) childSelectors() []string {
+	selectors := []string{"0.0.0.0/0"}
+	if b.options.IPMode == network.IPModeDualStack {
+		selectors = append(selectors, "::/0")
+	}
+	return selectors
+}
+
 func (b *Backend) config(name string) map[string]any {
 	children := map[string]any{}
-	for i, p := range b.options.Routes {
-		children[childName(name, i)] = map[string]any{"local_ts": []string{"dynamic"}, "remote_ts": []string{p.String()}, "esp_proposals": []string{"aes256-sha256-modp2048"}, "start_action": "none", "dpd_action": "clear", "close_action": "none", "rekey_time": "3000s", "life_time": "3600s"}
+	for i, selector := range b.childSelectors() {
+		children[childName(name, i)] = map[string]any{"local_ts": []string{"dynamic"}, "remote_ts": []string{selector}, "esp_proposals": []string{"aes256-sha256-modp2048"}, "start_action": "none", "dpd_action": "clear", "close_action": "none", "rekey_time": "3000s", "life_time": "3600s"}
 	}
 	vips := []string{"0.0.0.0"}
 	if b.options.IPMode == network.IPModeDualStack {

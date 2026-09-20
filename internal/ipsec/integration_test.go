@@ -34,7 +34,7 @@ func TestGatewayIntegration(t *testing.T) {
 	if err = json.Unmarshal(data, &creds); err != nil {
 		t.Fatal("invalid credentials JSON")
 	}
-	base := Options{Transport: os.Getenv("FORTIVPN_IPSEC_TRANSPORT"), Gateway: netip.MustParseAddr(creds.Gateway), RemoteID: creds.Gateway, Username: creds.Username, Password: Secret(creds.Password), PSK: Secret(creds.PSK), IPMode: network.IPModeIPv4, Routes: []netip.Prefix{netip.MustParsePrefix(route4)}}
+	base := Options{Transport: os.Getenv("FORTIVPN_IPSEC_TRANSPORT"), Gateway: netip.MustParseAddr(creds.Gateway), RemoteID: creds.Gateway, Username: creds.Username, Password: Secret(creds.Password), PSK: Secret(creds.PSK), IPMode: network.IPModeIPv4}
 	ctl := socketControl{path: "/var/run/charon.vici"}
 	allocatedAddresses := make(map[string]struct{})
 	assertEmpty := func(t *testing.T) {
@@ -85,11 +85,9 @@ func TestGatewayIntegration(t *testing.T) {
 	for _, scenario := range []string{"ipv4", "dual", "wrong-password", "wrong-psk", "wrong-identity", "setup-cancel", "peer-loss"} {
 		t.Run(scenario, func(t *testing.T) {
 			o := base
-			o.Routes = append([]netip.Prefix(nil), base.Routes...)
 			switch scenario {
 			case "dual":
 				o.IPMode = network.IPModeDualStack
-				o.Routes = append(o.Routes, netip.MustParsePrefix(route6))
 			case "wrong-password":
 				o.Password = "intentionally-incorrect-password"
 			case "wrong-psk":
@@ -131,6 +129,21 @@ func TestGatewayIntegration(t *testing.T) {
 			}
 			if active.Info().Config.IPv6 != nil {
 				allocatedAddresses[active.Info().Config.IPv6.Address.Addr().String()] = struct{}{}
+			}
+			hasRoute := func(routes []network.Route, raw string) bool {
+				want := netip.MustParsePrefix(raw)
+				for _, route := range routes {
+					if route.Destination == want {
+						return true
+					}
+				}
+				return false
+			}
+			if !hasRoute(active.Info().Config.Routes4, route4) {
+				t.Fatalf("gateway did not negotiate expected IPv4 route %s: %v", route4, active.Info().Config.Routes4)
+			}
+			if scenario == "dual" && !hasRoute(active.Info().Config.Routes6, route6) {
+				t.Fatalf("gateway did not negotiate expected IPv6 route %s: %v", route6, active.Info().Config.Routes6)
 			}
 			t.Logf("assigned IPv4=%v IPv6=%v; routes4=%v routes6=%v", active.Info().Config.IPv4, active.Info().Config.IPv6, active.Info().Config.Routes4, active.Info().Config.Routes6)
 			runCtx, stop := context.WithCancel(context.Background())

@@ -20,16 +20,22 @@ const maxConfigSize = 1 << 20
 // Config is the effective configuration after resolving global, group and
 // instance settings. Command-line flags may override these values afterwards.
 type Config struct {
-	Gateway  string
-	Port     int
-	Realm    string
-	Username string
-	Password string
-	SAML     bool
-	IPMode   string
-	Browser  string
-	Timeout  time.Duration
-	Insecure bool
+	Gateway   string
+	Port      int
+	Realm     string
+	Username  string
+	Password  string
+	PSK       string
+	SAML      bool
+	IPMode    string
+	Browser   string
+	Timeout   time.Duration
+	Insecure  bool
+	Protocol  string
+	RemoteID  string
+	Transport string
+	TCPPort   int
+	Socket    string
 }
 
 // File is the structured representation used by JSON and YAML files.
@@ -40,12 +46,18 @@ type File struct {
 }
 
 type Globals struct {
-	Insecure *bool     `json:"insecure,omitempty" yaml:"insecure,omitempty"`
-	IPMode   *string   `json:"ip_mode,omitempty" yaml:"ip_mode,omitempty"`
-	Timeout  *Duration `json:"timeout,omitempty" yaml:"timeout,omitempty"`
-	Browser  *string   `json:"browser,omitempty" yaml:"browser,omitempty"`
-	Username *string   `json:"username,omitempty" yaml:"username,omitempty"`
-	Password *string   `json:"password,omitempty" yaml:"password,omitempty"`
+	Insecure  *bool     `json:"insecure,omitempty" yaml:"insecure,omitempty"`
+	IPMode    *string   `json:"ip_mode,omitempty" yaml:"ip_mode,omitempty"`
+	Timeout   *Duration `json:"timeout,omitempty" yaml:"timeout,omitempty"`
+	Browser   *string   `json:"browser,omitempty" yaml:"browser,omitempty"`
+	Username  *string   `json:"username,omitempty" yaml:"username,omitempty"`
+	Password  *string   `json:"password,omitempty" yaml:"password,omitempty"`
+	PSK       *string   `json:"psk,omitempty" yaml:"psk,omitempty"`
+	Protocol  *string   `json:"protocol,omitempty" yaml:"protocol,omitempty"`
+	RemoteID  *string   `json:"remote_id,omitempty" yaml:"remote_id,omitempty"`
+	Transport *string   `json:"transport,omitempty" yaml:"transport,omitempty"`
+	TCPPort   *int      `json:"tcp_port,omitempty" yaml:"tcp_port,omitempty"`
+	Socket    *string   `json:"socket,omitempty" yaml:"socket,omitempty"`
 }
 
 type Group struct {
@@ -137,7 +149,7 @@ func AddInstance(path string, instance Instance) error {
 	if err != nil {
 		return err
 	}
-	if hasPassword(file) && info.Mode().Perm()&0o077 != 0 {
+	if hasSecrets(file) && info.Mode().Perm()&0o077 != 0 {
 		return passwordPermissionsError(path)
 	}
 	file.Instances = append(file.Instances, instance)
@@ -157,7 +169,7 @@ func AddInstance(path string, instance Instance) error {
 	}
 	data = append(bytes.TrimRight(data, "\n"), '\n')
 	mode := info.Mode().Perm()
-	if hasPassword(file) {
+	if hasSecrets(file) {
 		mode = 0o600
 	}
 	return atomicWrite(path, data, mode)
@@ -277,11 +289,20 @@ func resolve(path string, info os.FileInfo, file File, selected string) (Config,
 	if err := validateIPMode(cfg.IPMode); err != nil {
 		return Config{}, fmt.Errorf("instance %q: %w", current.Name, err)
 	}
+	if cfg.Protocol != "" && cfg.Protocol != "sslvpn" && cfg.Protocol != "ipsec" {
+		return Config{}, fmt.Errorf("instance %q: protocol %q must be sslvpn or ipsec", current.Name, cfg.Protocol)
+	}
+	if cfg.Transport != "" && cfg.Transport != "udp" && cfg.Transport != "tcp" {
+		return Config{}, fmt.Errorf("instance %q: transport %q must be udp or tcp", current.Name, cfg.Transport)
+	}
+	if cfg.TCPPort != 0 && cfg.Transport != "tcp" {
+		return Config{}, fmt.Errorf("instance %q: tcp_port requires transport tcp", current.Name)
+	}
 	return cfg, nil
 }
 
 func validateFile(path string, info os.FileInfo, file File) error {
-	if hasPassword(file) && info.Mode().Perm()&0o077 != 0 {
+	if hasSecrets(file) && info.Mode().Perm()&0o077 != 0 {
 		return passwordPermissionsError(path)
 	}
 	return validateStructure(path, file)
@@ -299,6 +320,9 @@ func validateStructure(path string, file File) error {
 	if file.Globals.Timeout != nil && time.Duration(*file.Globals.Timeout) <= 0 {
 		return fmt.Errorf("globals: timeout must be greater than zero")
 	}
+	if err := validateConnectionSettings("globals", file.Globals); err != nil {
+		return err
+	}
 	for name, group := range file.Groups {
 		if strings.TrimSpace(name) == "" || strings.Contains(name, "/") {
 			return fmt.Errorf("group names must be non-empty and must not contain a slash")
@@ -310,6 +334,9 @@ func validateStructure(path string, file File) error {
 		}
 		if group.Timeout != nil && time.Duration(*group.Timeout) <= 0 {
 			return fmt.Errorf("group %q: timeout must be greater than zero", name)
+		}
+		if err := validateConnectionSettings(fmt.Sprintf("group %q", name), group.Globals); err != nil {
+			return err
 		}
 	}
 	seen := make(map[string]struct{}, len(file.Instances))
@@ -340,6 +367,9 @@ func validateStructure(path string, file File) error {
 		}
 		if current.Timeout != nil && time.Duration(*current.Timeout) <= 0 {
 			return fmt.Errorf("instance %q: timeout must be greater than zero", key)
+		}
+		if err := validateConnectionSettings(fmt.Sprintf("instance %q", key), current.Globals); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -398,21 +428,25 @@ func selector(group, instance string) string {
 	return group + "/" + instance
 }
 
-func hasPassword(file File) bool {
-	if file.Globals.Password != nil && *file.Globals.Password != "" {
+func hasSecrets(file File) bool {
+	if containsSecret(file.Globals) {
 		return true
 	}
 	for _, group := range file.Groups {
-		if group.Password != nil && *group.Password != "" {
+		if containsSecret(group.Globals) {
 			return true
 		}
 	}
 	for _, instance := range file.Instances {
-		if instance.Password != nil && *instance.Password != "" {
+		if containsSecret(instance.Globals) {
 			return true
 		}
 	}
 	return false
+}
+
+func containsSecret(values Globals) bool {
+	return values.Password != nil && *values.Password != "" || values.PSK != nil && *values.PSK != ""
 }
 
 func applyGlobals(cfg *Config, values Globals) {
@@ -432,6 +466,24 @@ func applyGlobals(cfg *Config, values Globals) {
 	if values.Password != nil {
 		cfg.Password = *values.Password
 	}
+	if values.PSK != nil {
+		cfg.PSK = *values.PSK
+	}
+	if values.Protocol != nil {
+		cfg.Protocol = strings.ToLower(strings.TrimSpace(*values.Protocol))
+	}
+	if values.RemoteID != nil {
+		cfg.RemoteID = *values.RemoteID
+	}
+	if values.Transport != nil {
+		cfg.Transport = strings.ToLower(strings.TrimSpace(*values.Transport))
+	}
+	if values.TCPPort != nil {
+		cfg.TCPPort = *values.TCPPort
+	}
+	if values.Socket != nil {
+		cfg.Socket = *values.Socket
+	}
 }
 
 func applyBool(target *bool, value *bool) {
@@ -449,6 +501,28 @@ func validateIPMode(value string) error {
 	}
 }
 
+func validateConnectionSettings(scope string, values Globals) error {
+	if values.Protocol != nil {
+		protocol := strings.ToLower(strings.TrimSpace(*values.Protocol))
+		if protocol != "" && protocol != "sslvpn" && protocol != "ipsec" {
+			return fmt.Errorf("%s: protocol %q must be sslvpn or ipsec", scope, *values.Protocol)
+		}
+	}
+	if values.Transport != nil {
+		transport := strings.ToLower(strings.TrimSpace(*values.Transport))
+		if transport != "" && transport != "udp" && transport != "tcp" {
+			return fmt.Errorf("%s: transport %q must be udp or tcp", scope, *values.Transport)
+		}
+	}
+	if values.TCPPort != nil && (*values.TCPPort < 1 || *values.TCPPort > 65535) {
+		return fmt.Errorf("%s: tcp_port must be between 1 and 65535", scope)
+	}
+	if values.Socket != nil && *values.Socket != "" && !filepath.IsAbs(*values.Socket) {
+		return fmt.Errorf("%s: socket must be an absolute path", scope)
+	}
+	return nil
+}
+
 func passwordPermissionsError(path string) error {
-	return fmt.Errorf("config %q contains a password and must not be readable by group or others (run chmod 600)", path)
+	return fmt.Errorf("config %q contains a password or PSK and must not be readable by group or others (run chmod 600)", path)
 }

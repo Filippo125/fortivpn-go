@@ -22,9 +22,15 @@ func TestConfigAddInstanceWritesAllExplicitOptions(t *testing.T) {
 		"--config", path,
 		"--instance", "company/production",
 		"--gateway", "vpn.example.test",
+		"--protocol", "ipsec",
 		"--port", "8443",
 		"--realm", "employees",
 		"--username", "alice",
+		"--psk", "shared-key",
+		"--remote-id", "gateway.example.test",
+		"--transport", "tcp",
+		"--tcp-port", "4500",
+		"--socket", "/private/runtime/charon.vici",
 		"--saml=false",
 		"--ip-mode", "dual",
 		"--browser", "default",
@@ -41,7 +47,7 @@ func TestConfigAddInstanceWritesAllExplicitOptions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Gateway != "vpn.example.test" || cfg.Port != 8443 || cfg.Realm != "employees" || cfg.Username != "alice" || cfg.SAML || cfg.IPMode != "dual" || cfg.Browser != "default" || !cfg.Insecure {
+	if cfg.Gateway != "vpn.example.test" || cfg.Protocol != "ipsec" || cfg.Port != 8443 || cfg.Realm != "employees" || cfg.Username != "alice" || cfg.PSK != "shared-key" || cfg.RemoteID != "gateway.example.test" || cfg.Transport != "tcp" || cfg.TCPPort != 4500 || cfg.Socket != "/private/runtime/charon.vici" || cfg.SAML || cfg.IPMode != "dual" || cfg.Browser != "default" || !cfg.Insecure {
 		t.Fatalf("config = %#v", cfg)
 	}
 }

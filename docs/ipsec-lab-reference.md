@@ -177,9 +177,10 @@ del server: servirà un successivo profilo con autenticazione a certificato.
 
 ## 3. Phase 2: IPv4 e IPv6
 
-I selettori ampi permettono la negoziazione con il client. L'accesso effettivo
-è limitato dalle policy e dalle reti split. L'aggiunta automatica delle route
-è disabilitata; le route per i pool sono definite nel blocco 5.
+Il client propone selector ampi; il FortiGate li restringe alle LAN autorizzate
+durante la negoziazione delle CHILD_SA. Questi selector negoziati diventano le
+rotte split del client. L'aggiunta automatica delle route lato FortiGate è
+disabilitata; le route per i pool sono definite nel blocco 5.
 
 ```text
 config vpn ipsec phase2-interface
@@ -189,7 +190,7 @@ config vpn ipsec phase2-interface
         set pfs enable
         set dhgrp 14
         set keylifeseconds 3600
-        set src-subnet 0.0.0.0 0.0.0.0
+        set src-subnet 198.51.100.0 255.255.255.0
         set dst-subnet 0.0.0.0 0.0.0.0
         set add-route disable
     next
@@ -201,7 +202,7 @@ config vpn ipsec phase2-interface
         set keylifeseconds 3600
         set src-addr-type subnet6
         set dst-addr-type subnet6
-        set src-subnet6 ::/0
+        set src-subnet6 2001:db8:100::/64
         set dst-subnet6 ::/0
         set add-route disable
     next

@@ -2,10 +2,10 @@
 
 ## Stato
 
-Il primo backend Go è implementato in `internal/ipsec` e accessibile con
-`fortivpn ipsec connect`. È un comando sperimentale separato dai comandi
-SSL-VPN: le configurazioni INI esistenti mantengono il loro significato e
-`--protocol ipsec` non è ancora disponibile.
+Il primo backend Go è implementato in `internal/ipsec`. Il comando utente
+`fortivpn connect <istanza>` seleziona il backend tramite `protocol: ipsec`;
+`fortivpn ipsec connect` resta disponibile come interfaccia avanzata. Le
+istanze senza `protocol` continuano a usare SSL-VPN.
 
 Il prototipo Linux ha superato autenticazione PSK + EAP-MSCHAPv2, allocazione
 IPv4/IPv6, NAT-T e traffico verso il FortiGate di laboratorio. macOS nativo
@@ -35,8 +35,8 @@ un daemon `charon` dedicato tramite socket Unix. Non implementa IKE o ESP.
   preflight li controlla e rifiuta il daemon se presenti. Non viene integrato
   il DNS nel sistema e non vengono eseguiti script up/down.
 - Il profilo richiede gateway IPv4, identità remota esplicita, EAP-MSCHAPv2,
-  NAT-T e rotte split esplicite. TCP richiede `--transport tcp` e il runtime
-  userspace dedicato; nessun fallback SSL-VPN.
+  NAT-T e traffic selector restituiti dal gateway. TCP richiede
+  `--transport tcp` e il runtime userspace dedicato; nessun fallback SSL-VPN.
 - SAML/MFA, certificati, IPv6 come trasporto esterno e riconnessione
   automatica non sono implementati da questo backend.
 
@@ -52,35 +52,41 @@ kernel adatto alla piattaforma. Il socket Unix deve essere accessibile solo
 agli utenti autorizzati a controllare la VPN. Per il laboratorio è disponibile
 [la configurazione del daemon](../tests/integration/ipsec/strongswan.conf).
 
-File JSON delle credenziali, con permessi `0600` e fuori dal repository:
+Usare la stessa configurazione JSON/YAML della SSL-VPN, con permessi `0600` e
+fuori dal repository quando contiene `password` o `psk`:
 
-```json
-{
-  "gateway": "192.0.2.10",
-  "username": "vpn-test-user",
-  "password": "PASSWORD_DI_LABORATORIO",
-  "psk": "PSK_DI_LABORATORIO"
-}
+```yaml
+instances:
+  - name: ipsec-lab
+    gateway: 192.0.2.10
+    protocol: ipsec
+    remote_id: 192.0.2.10
+    username: vpn-test-user
+    password: PASSWORD_DI_LABORATORIO
+    psk: PSK_DI_LABORATORIO
+    saml: false
+    ip_mode: dual
+    transport: udp
 ```
 
 ```sh
-fortivpn ipsec connect \
-  --credentials /percorso/privato/credentials.json \
-  --remote-id 192.0.2.10 \
-  --ip-mode dual \
-  --route 198.51.100.0/24 \
-  --route 2001:db8:100::/64
+fortivpn connect ipsec-lab --config /percorso/privato/fortivpn.yaml
 ```
 
 `--socket` sceglie il socket VICI (default `/var/run/charon.vici`). `--timeout`
 limita il setup (default 30s). `--duration 30s` disconnette automaticamente
 30 secondi dopo il setup; altrimenti la sessione dura fino a Ctrl-C/SIGTERM.
 
-La PSK e la password non compaiono negli argomenti del processo. Le opzioni
-SSL-VPN `--realm`, `--port`, `--insecure` e `--config` non si applicano a questo
-comando. Le route `/0` e quelle che comprendono il gateway vengono rifiutate.
-In modalità dual devono essere richieste route per entrambe le famiglie;
-un'allocazione o una CHILD_SA mancante fa fallire il setup con cleanup.
+La PSK e la password lette dalla configurazione non compaiono negli argomenti
+del processo. Il precedente file JSON è ancora accettato tramite
+`--credentials` per compatibilità. Le opzioni SSL-VPN `--realm`, `--port` e
+`--insecure` non si applicano a questo comando; una configurazione che risolve
+`saml: true` viene rifiutata esplicitamente. Il client propone selector ampi e
+ricava le rotte dai `remote-ts` delle CHILD_SA installate, fino a un massimo di
+32. Un selector `/0` è accettato come full tunnel. Le rotte non-default che
+contengono il gateway e, con TCP, quelle che contengono il relay loopback
+vengono rifiutate. In modalità dual il gateway deve installare una CHILD_SA per
+entrambe le famiglie; un'allocazione o una CHILD_SA mancante causa il cleanup.
 
 Il monitor verifica periodicamente che IKE e CHILD_SA siano presenti. Tre
 rilevazioni consecutive incomplete producono un errore e la disconnessione;

@@ -15,10 +15,16 @@ const addInstanceUsage = `Usage:
 
 Instance options:
   --gateway <host>       FortiGate hostname or address
+  --protocol <protocol>  sslvpn or ipsec (default sslvpn)
   --port <port>          Gateway HTTPS port
   --realm <realm>        Authentication realm
   --username <username>  VPN username
   --password <password>  VPN password (visible in process arguments)
+  --psk <psk>            IPsec pre-shared key (visible in process arguments)
+  --remote-id <id>       IPsec gateway identity
+  --transport <mode>     IPsec transport: udp or tcp
+  --tcp-port <port>      IPsec TCP port
+  --socket <path>        Dedicated strongSwan VICI socket
   --saml[=true|false]     Enable or disable SAML
   --ip-mode <mode>       auto, ipv4, ipv6, or dual
   --browser <browser>    SAML browser
@@ -43,10 +49,16 @@ func runAddInstance(args []string, out io.Writer) error {
 	path := fs.String("config", "", "")
 	selector := fs.String("instance", "", "")
 	gateway := fs.String("gateway", "", "")
+	protocol := fs.String("protocol", "", "")
 	port := fs.Int("port", 0, "")
 	realm := fs.String("realm", "", "")
 	username := fs.String("username", "", "")
 	password := fs.String("password", "", "")
+	psk := fs.String("psk", "", "")
+	remoteID := fs.String("remote-id", "", "")
+	transport := fs.String("transport", "", "")
+	tcpPort := fs.Int("tcp-port", 0, "")
+	socket := fs.String("socket", "", "")
 	ipMode := fs.String("ip-mode", "", "")
 	browser := fs.String("browser", "", "")
 	timeout := fs.Duration("timeout", 0, "")
@@ -68,6 +80,9 @@ func runAddInstance(args []string, out io.Writer) error {
 		return err
 	}
 	instance := appconfig.Instance{Name: name, Group: group, Gateway: *gateway, Realm: *realm}
+	if flagWasSet(fs, "protocol") {
+		instance.Protocol = protocol
+	}
 	if flagWasSet(fs, "port") {
 		instance.Port = port
 	}
@@ -76,6 +91,21 @@ func runAddInstance(args []string, out io.Writer) error {
 	}
 	if flagWasSet(fs, "password") {
 		instance.Password = password
+	}
+	if flagWasSet(fs, "psk") {
+		instance.PSK = psk
+	}
+	if flagWasSet(fs, "remote-id") {
+		instance.RemoteID = remoteID
+	}
+	if flagWasSet(fs, "transport") {
+		instance.Transport = transport
+	}
+	if flagWasSet(fs, "tcp-port") {
+		instance.TCPPort = tcpPort
+	}
+	if flagWasSet(fs, "socket") {
+		instance.Socket = socket
 	}
 	if flagWasSet(fs, "ip-mode") {
 		instance.IPMode = ipMode

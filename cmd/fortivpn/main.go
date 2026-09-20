@@ -24,9 +24,10 @@ import (
 )
 
 const usage = `Usage:
+  fortivpn connect <group/instance> [--config PATH] [options]
   fortivpn inspect [gateway] --saml [options]
   fortivpn inspect [gateway] --username <username> [--password <password>] [options]
-  fortivpn ipsec connect --credentials FILE --remote-id ID --route PREFIX [options]
+  fortivpn ipsec connect [gateway] --remote-id ID [options]
   fortivpn tun create [options]
   fortivpn tunnel probe [gateway] --saml [options]
   fortivpn tunnel probe [gateway] --username <username> [--password <password>] [options]
@@ -88,6 +89,9 @@ func run(args []string, out io.Writer) error {
 	}
 	if args[0] == "config" {
 		return runConfig(args[1:], out)
+	}
+	if args[0] == "connect" {
+		return runConnect(args[1:], out)
 	}
 	if args[0] == "__complete-instances" {
 		return completeInstances(args[1:], out)

@@ -14,6 +14,7 @@ func text(m *vici.Message, key string) string   { v, _ := m.Get(key).(string); r
 func list(m *vici.Message, key string) []string { v, _ := m.Get(key).([]string); return v }
 
 func (b *Backend) info(name string, messages []*vici.Message) (session.Info, error) {
+	const maxNegotiatedRoutes = 32
 	for _, message := range messages {
 		sa, ok := message.Get(name).(*vici.Message)
 		if !ok || text(sa, "state") != "ESTABLISHED" {
@@ -55,7 +56,8 @@ func (b *Backend) info(name string, messages []*vici.Message) (session.Info, err
 		if !ok {
 			return session.Info{}, errors.New("no installed IPsec child SAs")
 		}
-		for i, requested := range b.options.Routes {
+		for i, proposed := range b.childSelectors() {
+			proposal := netip.MustParsePrefix(proposed)
 			found := false
 			for _, key := range children.Keys() {
 				child, ok := children.Get(key).(*vici.Message)
@@ -70,7 +72,7 @@ func (b *Backend) info(name string, messages []*vici.Message) (session.Info, err
 					return session.Info{}, errors.New("IPsec child is not an ESP tunnel using NAT-T")
 				}
 				vip := cfg.IPv4
-				if requested.Addr().Is6() {
+				if proposal.Addr().Is6() {
 					vip = cfg.IPv6
 				}
 				locals := list(child, "local-ts")
@@ -83,14 +85,23 @@ func (b *Backend) info(name string, messages []*vici.Message) (session.Info, err
 				}
 				for _, raw := range remotes {
 					p, err := netip.ParsePrefix(raw)
-					if err != nil || p != p.Masked() || p.Bits() < requested.Bits() || !requested.Contains(p.Addr()) {
-						return session.Info{}, errors.New("IPsec remote selector exceeds the requested split route")
+					if err != nil || p != p.Masked() || p.Addr().Is4In6() || p.Addr().IsMulticast() || p.Addr().Is6() != proposal.Addr().Is6() {
+						return session.Info{}, errors.New("invalid negotiated IPsec remote selector")
+					}
+					if p.Bits() != 0 && p.Addr().Is4() && p.Contains(b.options.Gateway) {
+						return session.Info{}, errors.New("negotiated IPsec route contains the gateway")
+					}
+					if p.Bits() != 0 && b.options.Transport == "tcp" && p.Addr().Is4() && p.Contains(netip.MustParseAddr("127.0.0.1")) {
+						return session.Info{}, errors.New("negotiated IPsec route contains the TCP loopback relay")
 					}
 					route := network.Route{Destination: p}
 					if p.Addr().Is4() {
 						cfg.Routes4 = appendRoute(cfg.Routes4, route)
 					} else {
 						cfg.Routes6 = appendRoute(cfg.Routes6, route)
+					}
+					if len(cfg.Routes4)+len(cfg.Routes6) > maxNegotiatedRoutes {
+						return session.Info{}, errors.New("gateway negotiated too many IPsec routes")
 					}
 				}
 				found = true

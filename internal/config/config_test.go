@@ -42,6 +42,76 @@ instances:
 	}
 }
 
+func TestLoadYAMLResolvesIPsecPSK(t *testing.T) {
+	path := writeStructuredConfig(t, "fortivpn.yaml", `
+globals:
+  psk: global-key
+groups:
+  employees:
+    psk: group-key
+instances:
+  - name: office
+    group: employees
+    gateway: 192.0.2.10
+`)
+	cfg, err := Load(path, "employees/office")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PSK != "group-key" {
+		t.Fatalf("resolved PSK = %q", cfg.PSK)
+	}
+}
+
+func TestLoadYAMLResolvesIPsecConnectionSettings(t *testing.T) {
+	path := writeStructuredConfig(t, "fortivpn.yaml", `
+globals:
+  protocol: ipsec
+  transport: tcp
+  tcp_port: 4500
+instances:
+  - name: office
+    gateway: vpn.example.test
+    remote_id: gateway.example.test
+    socket: /private/runtime/charon.vici
+`)
+	cfg, err := Load(path, "office")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Protocol != "ipsec" || cfg.RemoteID != "gateway.example.test" || cfg.Transport != "tcp" || cfg.TCPPort != 4500 || cfg.Socket != "/private/runtime/charon.vici" {
+		t.Fatalf("IPsec settings = %#v", cfg)
+	}
+}
+
+func TestLoadRejectsInvalidConnectionSettings(t *testing.T) {
+	path := writeStructuredConfig(t, "fortivpn.yaml", `
+instances:
+  - name: office
+    gateway: vpn.example.test
+    protocol: wireguard
+`)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "protocol") {
+		t.Fatalf("protocol error = %v", err)
+	}
+}
+
+func TestLoadStructuredChecksPermissionsForPSK(t *testing.T) {
+	path := writeStructuredConfig(t, "fortivpn.yaml", `
+globals:
+  psk: shared-key
+instances:
+  - name: office
+    gateway: 192.0.2.10
+`)
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "chmod 600") {
+		t.Fatalf("permissions error = %v", err)
+	}
+}
+
 func TestLoadJSONSelectsNamedInstance(t *testing.T) {
 	path := writeStructuredConfig(t, "fortivpn.json", `{
   "globals": {"ip_mode": "auto"},
