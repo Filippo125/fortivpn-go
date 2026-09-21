@@ -7,7 +7,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
@@ -125,7 +124,11 @@ func OpenBrowserWith(rawURL, browser string) error {
 		}
 		if browser != "" && !strings.EqualFold(browser, "default") {
 			command, args = "open", []string{"-a", browser, rawURL}
-			if err := exec.Command(command, args...).Run(); err != nil {
+			cmd, err := newBrowserCommand(command, args...)
+			if err != nil {
+				return err
+			}
+			if err := cmd.Run(); err != nil {
 				return fmt.Errorf("open %s: %w", browser, err)
 			}
 			return nil
@@ -136,5 +139,9 @@ func OpenBrowserWith(rawURL, browser string) error {
 	default:
 		command, args = "xdg-open", []string{rawURL}
 	}
-	return exec.Command(command, args...).Start()
+	cmd, err := newBrowserCommand(command, args...)
+	if err != nil {
+		return err
+	}
+	return cmd.Start()
 }
